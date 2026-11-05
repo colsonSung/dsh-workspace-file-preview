@@ -1,15 +1,10 @@
+import { rename, writeFile } from 'node:fs/promises';
 import { build } from 'esbuild';
-import { readFileSync } from 'node:fs';
-
-// The bundle id must equal the package name: the client module system keys a
-// package-local chunk (client.mermaid.js, client.editor.js) by its owner's
-// id, and a chunk whose owner is unknown never arrives.
-const PACKAGE_ID = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).name;
 
 const wrap = (chunk) => ({
   banner: {
     js: `window.__ModuleLoader__.load({
-	id: "${PACKAGE_ID}",
+	id: "@local/markdown-mermaid-preview",
 ${chunk ? `\tchunk: "${chunk}",\n` : ''}	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;`,
@@ -27,30 +22,39 @@ const shared = {
   target: 'es2020',
   platform: 'browser',
   minify: true,
-  // Keep the `/*! ... */` license banners of the bundled third-party code.
-  legalComments: 'eof',
   logLevel: 'info',
+  // The Harness provides these at runtime through the module loader; bundling
+  // them would ship a second copy of React inside the client.
+  external: ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/dsh-client-ui-primitives'],
 };
 
-await build({
-  ...shared,
-  entryPoints: ['src/client-entry.js'],
-  outfile: 'client.js',
-  external: ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/dsh-client-ui-primitives'],
-  ...wrap(null),
-});
+/**
+ * Publish one bundle.
+ *
+ * The Harness client watches a linked package and re-reads a bundle as soon as
+ * it changes. A plain write opens a window in which the watcher reads a
+ * half-written file, and the client then reports the module as "loaded
+ * without registering" through __ModuleLoader__.load. Writing a sibling file
+ * and renaming it into place is atomic on the same filesystem, so a reader
+ * sees either the previous bundle or the new one, never a partial one.
+ */
+const publish = async (outputFile) => {
+  const temporary = `${outputFile.path}.tmp`;
+  await writeFile(temporary, outputFile.text);
+  await rename(temporary, outputFile.path);
+};
 
-await build({
-  ...shared,
-  entryPoints: ['src/mermaid-chunk.js'],
-  outfile: 'client.mermaid.js',
-  ...wrap('client.mermaid.js'),
-});
+const bundle = async (entry, outfile, chunk) => {
+  const result = await build({
+    ...shared,
+    entryPoints: [entry],
+    outfile,
+    write: false,
+    ...wrap(chunk),
+  });
+  await publish(result.outputFiles[0]);
+};
 
-await build({
-  ...shared,
-  entryPoints: ['src/editor-chunk.js'],
-  outfile: 'client.editor.js',
-  ...wrap('client.editor.js'),
-});
-
+await bundle('src/client-entry.js', 'client.js', null);
+await bundle('src/mermaid-chunk.js', 'client.mermaid.js', 'client.mermaid.js');
+await bundle('src/editor-chunk.js', 'client.editor.js', 'client.editor.js');

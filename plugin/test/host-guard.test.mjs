@@ -10,15 +10,32 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { apply } from '../index.js';
+import { apply, ROUTE } from '../index.js';
 
-/** Mount the host half against a double and return the registered commands. */
+/** Mount the host half against a double and return what it registered. */
 const mount = () => {
   const commands = new Map();
+  const routes = new Map();
   const ctx = {
     effect: (fn) => {
       const disposer = fn();
       return typeof disposer === 'function' ? disposer : () => {};
+    },
+    inject: (names, callback) => {
+      callback({
+        effect: (fn) => {
+          const disposer = fn();
+          return typeof disposer === 'function' ? disposer : () => {};
+        },
+        connection: {
+          fetch: {
+            register: (descriptor) => {
+              routes.set(descriptor.path, descriptor);
+              return () => {};
+            },
+          },
+        },
+      });
     },
     commands: {
       register: (descriptor) => {
@@ -37,11 +54,11 @@ const mount = () => {
     },
   };
   apply(ctx);
-  return commands;
+  return { commands, routes };
 };
 
 const run = async (name, payload) => {
-  const commands = mount();
+  const { commands } = mount();
   const descriptor = commands.get(name);
   assert.ok(descriptor, `${name} is registered`);
   return descriptor.handler({ rawInput: JSON.stringify(payload) });
@@ -93,4 +110,36 @@ test('mmd-fs refuses a relative path, a traversal and a drive root', async () =>
 
   const driveRoot = await run('mmd-fs', { op: NOOP, path: 'D:\\' });
   assert.match(driveRoot.text, /path too shallow/);
+});
+
+/** Post one body to the annotation draft route. */
+const post = async (body) => {
+  const { routes } = mount();
+  const descriptor = routes.get(ROUTE);
+  assert.ok(descriptor, `the route ${ROUTE} is registered`);
+  const request = new Request(`http://localhost${ROUTE}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const response = await descriptor.fetch(request);
+  return { status: response.status, body: await response.json() };
+};
+
+test('the annotation draft route refuses a method it does not know', async () => {
+  const { status, body } = await post({ method: 'something-else' });
+  assert.equal(status, 400);
+  assert.equal(body.ok, false);
+  assert.equal(body.error.code, 'mmd-annotate/unknown-method');
+});
+
+test('the annotation draft route answers with a readable error when no model is mounted', async () => {
+  const { status, body } = await post({
+    method: 'annotate-draft',
+    payload: { kind: 'element', path: 'prototype.html', tag: 'div', intent: 'copy' },
+  });
+  assert.equal(status, 200);
+  assert.equal(body.ok, false);
+  assert.equal(body.error.code, 'mmd-annotate/failed');
+  assert.match(body.error.message, /未配置可用模型/);
 });

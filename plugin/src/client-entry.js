@@ -1,6 +1,8 @@
 import { Fragment, createElement as h, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { isAbsolutePath, joinPath, pathBasename, pathDirname, pathParts, relativeToRoot, toPosixPath } from '../paths.js';
+import { buildAttachmentParts, collectFiles, createAttachments, dropAttachment, isImageFile, revokeAttachments } from './attachments.js';
+import { requestAnswer, requestDraft } from './assist.js';
 
 // Optional host primitive; fall back to plain text when the module table lacks it.
 let MarkdownText = null;
@@ -41,12 +43,52 @@ const zh = {
   'annotate.pickTitle': '标注这个元素',
   'annotate.placeholder': '这里要改成…',
   'annotate.count': '{count} 条标注',
+  'annotate.countOne': '1 条标注',
   'annotate.failed': '无法读取这个 HTML 文件。',
   'annotate.loading': '正在加载 HTML…',
   'annotate.open': '标注',
   'annotate.openTitle': '打开 AI 标注视图（选择元素并写批注给 Agent）',
   'htmlAnnotate.tabTitle': 'HTML 标注',
   'annotate.message': '请修改文件 `{path}`，共有以下标注：\n{list}',
+  'annotate.attach': '附件',
+  'annotate.attachTitle': '添加附件或图片，也可以直接粘贴截图',
+  'annotate.attachRemove': '移除附件',
+  'annotate.attached': '{count} 个附件',
+  'annotate.attachFailed': '附件添加失败：{message}',
+  'annotate.sendFailed': '发送失败：{message}',
+  'annotate.sending': '发送中…',
+  'annotate.noSession': '当前会话不可用，附件未能随消息发送',
+  'annotate.edit': '编辑',
+  'annotate.editTitle': '编辑这条标注',
+  'annotate.editHeading': '编辑标注',
+  'annotate.save': '保存',
+  'annotate.assist': 'AI 辅助',
+  'annotate.assistTitle': '让 AI 起草这条标注',
+  'annotate.assistNote': '补充要求（可选），例如「只改文案，不动交互」',
+  'annotate.assistGenerate': '生成',
+  'annotate.assistTemplate': '用模板',
+  'annotate.assistBusy': '生成中…',
+  'annotate.assistFailed': 'AI 没有返回可用内容，请重试',
+  'annotate.assistDone': '已生成，可继续编辑',
+  'annotate.assistTemplateDone': '已套用模板，可继续编辑',
+  'annotate.intent.copy': '改文案',
+  'annotate.intent.ux': '优化交互',
+  'annotate.intent.issue': '指出问题',
+  'annotate.intent.rule': '补充规则',
+  'annotate.intent.translate': '翻译',
+  'annotate.template.copy': '把「{text}」的文案改得更简洁明确，直接给出改后的文案。',
+  'annotate.template.ux': '优化「{text}」所在区域的交互：说明点击后的反馈、状态变化，以及空态与异常态怎么处理。',
+  'annotate.template.issue': '指出「{text}」在信息层级、状态语义和业务规则上的问题，并给出具体修改建议。',
+  'annotate.template.rule': '补充「{text}」背后的业务规则与边界条件：空态、失败态、权限、限额与状态流转。',
+  'annotate.template.translate': '把「{text}」翻译成英文，保持术语与界面语气一致。',
+  'annotate.taskLabel': '任务',
+  'annotate.task.change': '直接改',
+  'annotate.task.plan': '先给方案',
+  'annotate.task.review': '只提建议',
+  'annotate.messagePlan': '请先给出修改方案，暂时不要改文件。目标文件 `{path}`，共有以下标注：\n{list}',
+  'annotate.messageReview': '请只评审以下标注并给出你的意见，不要修改文件。目标文件 `{path}`：\n{list}',
+  'annotate.imageMessagePlan': '请先给出修改方案，暂时不要改图片。目标图片 `{path}`，标注区域（百分比坐标）：\n{list}',
+  'annotate.imageMessageReview': '请只评审以下标注并给出你的意见，不要修改图片。目标图片 `{path}`，标注区域（百分比坐标）：\n{list}',
   'filesTree.label': '文件树',
   'openWith.label': '打开',
   'aiChat.title': 'AI 对话',
@@ -82,6 +124,21 @@ const zh = {
   'chat.addTemplate': '请参考文件 `{path}` ',
   'chat.editTemplate': '请修改文件 `{path}`：{instruction}',
   'chat.commentTemplate': '关于文件 `{path}` 中我选中的内容：\n\n{selection}\n\n{comment}',
+  'chat.addSelection': '加入对话',
+  'chat.copy': '复制',
+  'chat.addSelectionTitle': '把选中的内容加入对话',
+  'chat.askSide': '侧边提问',
+  'chat.askSideTitle': '在侧边对话里问，不打断当前会话',
+  'sideChat.title': '侧边对话',
+  'sideChat.context': '引用',
+  'sideChat.placeholder': '就这段内容提问…',
+  'sideChat.empty': '问点什么吧。',
+  'sideChat.ask': '提问',
+  'sideChat.failed': '提问失败：{message}',
+  'mdAnnotate.toggle': '标注',
+  'mdAnnotate.hint': '点击文档里的段落开始标注',
+  'mdAnnotate.pickTitle': '标注这段内容',
+  'mdAnnotate.placeholder': '写下要改的地方…',
   'reveal.openTree': '打开文件树',
   'reveal.loading': '正在读取目录…',
   'reveal.failed': '目录读取失败。',
@@ -143,12 +200,52 @@ const en = {
   'annotate.pickTitle': 'Annotate this element',
   'annotate.placeholder': 'Change this to…',
   'annotate.count': '{count} annotations',
+  'annotate.countOne': '1 annotation',
   'annotate.failed': 'Could not read this HTML file.',
   'annotate.loading': 'Loading HTML…',
   'annotate.open': 'Annotate',
   'annotate.openTitle': 'Open the AI annotation view (pick elements and comment for the Agent)',
   'htmlAnnotate.tabTitle': 'Annotate HTML',
   'annotate.message': 'Please change the file `{path}` with these annotations:\n{list}',
+  'annotate.attach': 'Attach',
+  'annotate.attachTitle': 'Attach a file or image, or paste a screenshot',
+  'annotate.attachRemove': 'Remove attachment',
+  'annotate.attached': '{count} attachments',
+  'annotate.attachFailed': 'Could not attach the file: {message}',
+  'annotate.sendFailed': 'Could not send: {message}',
+  'annotate.sending': 'Sending…',
+  'annotate.noSession': 'This session is unavailable, so the attachments were not sent',
+  'annotate.edit': 'Edit',
+  'annotate.editTitle': 'Edit this annotation',
+  'annotate.editHeading': 'Edit annotation',
+  'annotate.save': 'Save',
+  'annotate.assist': 'AI assist',
+  'annotate.assistTitle': 'Let the AI draft this annotation',
+  'annotate.assistNote': 'Extra requirement (optional), e.g. "copy only, keep the interaction"',
+  'annotate.assistGenerate': 'Generate',
+  'annotate.assistTemplate': 'Use template',
+  'annotate.assistBusy': 'Generating…',
+  'annotate.assistFailed': 'The AI returned nothing usable, please retry',
+  'annotate.assistDone': 'Drafted — keep editing it',
+  'annotate.assistTemplateDone': 'Template applied — keep editing it',
+  'annotate.intent.copy': 'Copy',
+  'annotate.intent.ux': 'Interaction',
+  'annotate.intent.issue': 'Issues',
+  'annotate.intent.rule': 'Rules',
+  'annotate.intent.translate': 'Translate',
+  'annotate.template.copy': 'Rewrite the copy of "{text}" so it is clearer and more direct, and give the final wording.',
+  'annotate.template.ux': 'Improve the interaction around "{text}": state the feedback after the click, the state changes, and how the empty and error states are handled.',
+  'annotate.template.issue': 'Flag the problems of "{text}" in information hierarchy, state semantics and business rules, and give concrete fixes.',
+  'annotate.template.rule': 'Add the business rules behind "{text}": empty state, failure state, permissions, limits and state transitions.',
+  'annotate.template.translate': 'Translate "{text}" into English, keeping the terminology and the tone of the interface.',
+  'annotate.taskLabel': 'Task',
+  'annotate.task.change': 'Edit now',
+  'annotate.task.plan': 'Plan first',
+  'annotate.task.review': 'Review only',
+  'annotate.messagePlan': 'Please propose a plan for the following changes first; do not change the file yet. Target file `{path}`:\n{list}',
+  'annotate.messageReview': 'Please review the following annotations and give your opinion; do not change the file. Target file `{path}`:\n{list}',
+  'annotate.imageMessagePlan': 'Please propose a plan for the following changes first; do not change the image yet. Target image `{path}`:\n{list}',
+  'annotate.imageMessageReview': 'Please review the following annotations and give your opinion; do not change the image. Target image `{path}`:\n{list}',
   'filesTree.label': 'Files',
   'openWith.label': 'Open',
   'aiChat.title': 'AI chat',
@@ -184,6 +281,21 @@ const en = {
   'chat.addTemplate': 'Please refer to the file `{path}` ',
   'chat.editTemplate': 'Please change the file `{path}`: {instruction}',
   'chat.commentTemplate': 'About the text I selected in `{path}`:\n\n{selection}\n\n{comment}',
+  'chat.addSelection': 'Add to chat',
+  'chat.copy': 'Copy',
+  'chat.addSelectionTitle': 'Add the selected text to the chat',
+  'chat.askSide': 'Ask in side chat',
+  'chat.askSideTitle': 'Ask about it in the side chat, without interrupting this conversation',
+  'sideChat.title': 'Side chat',
+  'sideChat.context': 'Cited',
+  'sideChat.placeholder': 'Ask about this selection…',
+  'sideChat.empty': 'Ask something about this file.',
+  'sideChat.ask': 'Ask',
+  'sideChat.failed': 'The question failed: {message}',
+  'mdAnnotate.toggle': 'Annotate',
+  'mdAnnotate.hint': 'Click a block to annotate',
+  'mdAnnotate.pickTitle': 'Annotate this block',
+  'mdAnnotate.placeholder': 'Write what has to change…',
   'reveal.openTree': 'Open file tree',
   'reveal.loading': 'Reading directory…',
   'reveal.failed': 'Failed to read the directory.',
@@ -632,6 +744,33 @@ const STYLE = `
 .mmd-pop-hint{font-size:11px;color:var(--dsw-alias-label-tertiary,#999)}
 .mmd-pop-send{border:0;border-radius:6px;padding:5px 12px;font-size:12px;color:#fff;background:#247bbf;cursor:pointer}
 .mmd-pop-send:disabled{opacity:.4;cursor:default}
+.mmd-pop-left{display:inline-flex;align-items:center;gap:8px;min-width:0}
+.mmd-pop-attach{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary,#777);cursor:pointer}
+.mmd-pop-attach:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06));color:var(--dsw-alias-label-primary,#333)}
+.mmd-pop-files{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.mmd-pop-file{position:relative;display:inline-flex;align-items:center;gap:6px;max-width:150px;padding:4px 6px;border:.5px solid var(--dsw-alias-border-l2,#ddd);border-radius:8px;background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.06))}
+.mmd-pop-file-img{width:22px;height:22px;border-radius:4px;object-fit:cover;background:var(--dsw-alias-bg-layer-3,#eee)}
+.mmd-pop-file-ico{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:4px;background:var(--dsw-alias-bg-layer-3,#eee);font-size:11px;color:var(--dsw-alias-label-secondary,#777)}
+.mmd-pop-file-name{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:11px;color:var(--dsw-alias-label-primary,#333)}
+.mmd-pop-error{display:block;margin-top:6px;font-size:11px;color:#c0392b}
+.mmd-pop-assist{display:block;margin-top:8px;padding:8px;border:.5px solid var(--dsw-alias-border-l2,#ddd);border-radius:8px;background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.06))}
+.mmd-pop-assist-row{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px}
+.mmd-pop-chip{border:.5px solid var(--dsw-alias-border-l2,#ddd);border-radius:99px;padding:2px 9px;font-size:11px;color:var(--dsw-alias-label-secondary,#777);background:transparent;cursor:pointer}
+.mmd-pop-chip:hover{color:var(--dsw-alias-label-primary,#333)}
+.mmd-pop-chip-on{border-color:#247bbf;color:#247bbf;background:rgba(36,123,191,.1)}
+.mmd-pop-note{width:100%;box-sizing:border-box;margin-bottom:6px;border:.5px solid var(--dsw-alias-border-l2,#ddd);border-radius:6px;padding:4px 7px;font:inherit;font-size:12px;color:var(--dsw-alias-label-primary,#333);background:var(--dsw-alias-bg-layer-1,#fff);outline:none}
+.mmd-pop-note:focus{border-color:#247bbf}
+.mmd-pop-assist-foot{display:flex;align-items:center;gap:6px}
+.mmd-pop-assist-btn{border:0;border-radius:6px;padding:3px 10px;font-size:11.5px;color:#fff;background:#247bbf;cursor:pointer}
+.mmd-pop-assist-btn:disabled{opacity:.4;cursor:default}
+.mmd-pop-assist-tpl{border:.5px solid var(--dsw-alias-border-l2,#ddd);border-radius:6px;padding:3px 10px;font-size:11.5px;color:var(--dsw-alias-label-secondary,#777);background:transparent;cursor:pointer}
+.mmd-pop-assist-tpl:hover{color:var(--dsw-alias-label-primary,#333)}
+.mmd-pop-assist-toggle{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary,#777);cursor:pointer}
+.mmd-pop-assist-toggle:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06));color:var(--dsw-alias-label-primary,#333)}
+.mmd-pop-assist-toggle-on{color:#247bbf;background:rgba(36,123,191,.12)}
+.mmd-pop-assist-hint{display:block;margin-top:6px;font-size:11px;color:#2e7d32}
+.mmd-anno-files{display:inline-flex;align-items:center;gap:3px;margin-left:6px;font-size:11px;color:var(--dsw-alias-label-secondary,#777)}
+.mmd-anno-notice{margin:6px 0 0;padding:6px 8px;border-radius:6px;font-size:12px;color:#c0392b;background:rgba(192,57,43,.08)}
 .mmd-comment-btn{position:fixed;z-index:1001;transform:translateX(-50%);display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border:.5px solid var(--dsw-alias-border-l2,#ddd);border-radius:99px;background:var(--dsw-alias-bg-layer-1,#fff);box-shadow:0 2px 10px rgba(0,0,0,.14);font-size:12px;color:var(--dsw-alias-label-primary,#333);cursor:pointer}
 .mmd-comment-btn:hover{background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.12))}
 /* Host "open in app" split button, restyled to a compact Codex-like control. */
@@ -701,12 +840,12 @@ const STYLE = `
 .mmd-img-stage{position:relative;display:inline-block;line-height:0;flex:none}
 .mmd-img-stage.mmd-img-editing{cursor:crosshair}
 .mmd-img{display:block;width:100%;height:auto;user-select:none;-webkit-user-drag:none}
-.mmd-img-region{position:absolute;border:1.5px solid #6c5ce7;background:rgba(108,92,231,.12);border-radius:2px;pointer-events:none}
+.mmd-img-region{position:absolute;border:1.5px solid #247bbf;background:rgba(36,123,191,.12);border-radius:2px;pointer-events:none}
 .mmd-img-region .mmd-anno-badge{position:absolute;top:-9px;left:-9px}
-.mmd-img-dragging{border-style:dashed;background:rgba(108,92,231,.18)}
+.mmd-img-dragging{border-style:dashed;background:rgba(36,123,191,.18)}
 .mmd-anno{display:flex;flex-direction:column;height:100%;min-height:0;font-family:var(--dsw-font,inherit)}
 .mmd-anno-bar{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:.5px solid var(--dsw-alias-border-l2,#eee)}
-.mmd-anno-active{border-color:#6c5ce7!important;color:#6c5ce7!important}
+.mmd-anno-active{border-color:#247bbf!important;color:#247bbf!important}
 .mmd-anno-toggle{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
 .mmd-document,.mmd-anno{position:relative}
 .mmd-fab-wrap{position:absolute;right:14px;bottom:16px;z-index:40;display:inline-flex}
@@ -792,7 +931,7 @@ const STYLE = `
 
 .mmd-anno{display:flex;flex-direction:column;height:100%;min-height:0;font-family:var(--dsw-font,inherit)}
 .mmd-anno-bar{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:.5px solid var(--dsw-alias-border-l2,#eee)}
-.mmd-anno-active{border-color:#6c5ce7!important;color:#6c5ce7!important}
+.mmd-anno-active{border-color:#247bbf!important;color:#247bbf!important}
 .mmd-anno-toggle{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
 .mmd-document,.mmd-anno{position:relative}
 .mmd-fab{position:absolute;right:14px;bottom:16px;z-index:40;display:flex;flex-direction:column;align-items:flex-end;gap:10px}
@@ -815,7 +954,7 @@ const STYLE = `
 .mmd-fab-send:not(:disabled):hover{background:#1e6aa6}
 .mmd-anno{display:flex;flex-direction:column;height:100%;min-height:0;font-family:var(--dsw-font,inherit)}
 .mmd-anno-bar{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:.5px solid var(--dsw-alias-border-l2,#eee)}
-.mmd-anno-active{border-color:#6c5ce7!important;color:#6c5ce7!important}
+.mmd-anno-active{border-color:#247bbf!important;color:#247bbf!important}
 .mmd-anno-toggle{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
 .mmd-document,.mmd-anno{position:relative}
 .mmd-fab{position:absolute;top:10px;right:12px;z-index:40;display:flex;flex-direction:column;align-items:flex-end;gap:8px}
@@ -827,24 +966,78 @@ const STYLE = `
 .mmd-anno-count{font-size:12px;color:var(--dsw-alias-label-secondary,#777)}
 .mmd-anno-stage{position:relative;flex:1;min-height:0}
 .mmd-anno-frame{display:block;width:100%;height:100%;border:0;background:#fff}
-.mmd-anno-hint{position:absolute;top:12px;left:50%;transform:translateX(-50%);padding:4px 12px;border-radius:99px;background:rgba(108,92,231,.1);color:#6c5ce7;font-size:12px;pointer-events:none}
+.mmd-anno-hint{position:absolute;top:12px;left:50%;transform:translateX(-50%);padding:4px 12px;border-radius:99px;background:rgba(36,123,191,.1);color:#247bbf;font-size:12px;pointer-events:none}
 .mmd-anno-list{position:absolute;top:8px;right:8px;width:280px;max-height:60%;overflow-y:auto;display:flex;flex-direction:column;gap:4px;padding:6px;border:.5px solid var(--dsw-alias-border-l2,#ddd);border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);box-shadow:0 4px 16px rgba(0,0,0,.12)}
 .mmd-anno-item{display:flex;align-items:flex-start;gap:7px;padding:5px 6px;border-radius:6px;font-size:12px;color:var(--dsw-alias-label-primary,#333)}
-.mmd-anno-badge{flex:none;min-width:17px;height:17px;border-radius:9px;background:#6c5ce7;color:#fff;font-size:10.5px;font-weight:600;line-height:17px;text-align:center}
+.mmd-anno-badge{flex:none;min-width:17px;height:17px;border-radius:9px;background:#247bbf;color:#fff;font-size:10.5px;font-weight:600;line-height:17px;text-align:center}
 .mmd-anno-text{flex:1;min-width:0;overflow-wrap:anywhere}
 .mmd-anno-del{flex:none;border:0;background:transparent;color:var(--dsw-alias-label-tertiary,#999);cursor:pointer;font-size:13px;padding:0 3px;border-radius:4px}
 .mmd-anno-del:hover{color:#b0503c}
+.mmd-anno-edit{flex:none;border:0;background:transparent;color:var(--dsw-alias-label-tertiary,#999);cursor:pointer;font-size:12px;padding:0 3px;border-radius:4px}
+.mmd-anno-edit:hover{color:#247bbf;background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06))}
+.mmd-anno-task{height:24px;border:.5px solid var(--dsw-alias-border-l2,#ddd);border-radius:6px;background:var(--dsw-alias-bg-layer-1,#fff);font:inherit;font-size:12px;color:var(--dsw-alias-label-primary,#333);cursor:pointer}
 .mmd-locate-row-wrap{position:relative}
 .mmd-locate-action{position:absolute;right:6px;top:50%;transform:translateY(-50%);display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-tertiary,#999);opacity:0;cursor:pointer}
 .mmd-locate-row-wrap:hover .mmd-locate-action{opacity:1}
 .mmd-locate-action:hover{background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.14));color:var(--dsw-alias-label-primary,#333)}
 
+/* The bar a reviewer reads a Markdown document with. */
+.mmd-md-bar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--dsw-alias-bg-layer-1,#fff);border-bottom:.5px solid var(--dsw-alias-border-l2,#eee)}
+.mmd-md-bar-spacer{flex:1}
+.mmd-anno-pill{flex:none;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;white-space:nowrap;border:.5px solid var(--dsw-alias-border-l2,#ddd);border-radius:99px;background:var(--dsw-alias-bg-layer-1,#fff);font:inherit;font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-primary,#222);cursor:pointer}
+.mmd-anno-pill:hover{background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.1))}
+.mmd-md-bar button.mmd-anno-toggle{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mmd-md-bar button.mmd-anno-toggle>span:last-child{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.mmd-md-bar .mmd-anno-pill,.mmd-md-bar .mmd-reveal-tree,.mmd-md-bar .mmd-anno-task,.mmd-md-bar .mmd-pop-send{flex:none}
+.mmd-md-bar-spacer{flex:1 1 0;min-width:0}
+.mmd-anno-pill-icon{display:inline-flex;align-items:center;color:var(--dsw-alias-label-secondary,#777)}
+.mmd-md-layer{position:absolute;inset:0;z-index:20;pointer-events:none}
+.mmd-md-mark{position:absolute;min-width:18px;height:18px;border-radius:9px;background:#247bbf;color:#fff;font:600 11px/18px ui-sans-serif,system-ui,sans-serif;text-align:center;transform:translate(-50%,-50%);box-shadow:0 1px 4px rgba(0,0,0,.25)}
+.mmd-md-outline{position:absolute;border:1.5px solid #247bbf;border-radius:4px;background:rgba(36,123,191,.06)}
+.mmd-md-hint{position:absolute;top:8px;left:50%;transform:translateX(-50%);padding:4px 12px;border-radius:99px;background:rgba(36,123,191,.1);color:#247bbf;font-size:12px;pointer-events:none;z-index:21}
+.mmd-picking{cursor:crosshair}
+
+/* The bar that follows a text selection. */
+.mmd-sel-actions{position:fixed;z-index:2147483000;display:flex;align-items:stretch;transform:translate(-50%,-100%);border:.5px solid var(--dsw-alias-border-l2,#dcdcdc);border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);box-shadow:0 6px 20px rgba(0,0,0,.14);overflow:hidden}
+.mmd-sel-actions.mmd-sel-below{transform:translate(-50%,0)}
+.mmd-sel-btn{padding:7px 14px;border:0;background:transparent;font:inherit;font-size:13px;line-height:1.2;color:var(--dsw-alias-label-primary,#1f1f1f);cursor:pointer;white-space:nowrap}
+.mmd-sel-btn:hover{background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.12))}
+.mmd-sel-sep{width:1px;margin:6px 0;background:var(--dsw-alias-border-l2,#e6e6e6)}
+
+/* The menu a right click opens inside the document. */
+.mmd-menu{position:fixed;z-index:2147483001;min-width:172px;padding:4px;border:.5px solid var(--dsw-alias-border-l2,#ddd);border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);box-shadow:0 10px 28px rgba(0,0,0,.18);display:flex;flex-direction:column}
+.mmd-menu-item{padding:7px 10px;border:0;border-radius:6px;background:transparent;font:inherit;font-size:13px;line-height:1.3;text-align:left;color:var(--dsw-alias-label-primary,#222);cursor:pointer;white-space:nowrap}
+.mmd-menu-item:hover{background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.12))}
+.mmd-menu-sep{height:1px;margin:4px 6px;background:var(--dsw-alias-border-l2,#eee)}
+
+/* The side chat: questions about this file that stay out of the main chat. */
+.mmd-md-overlay{position:fixed;z-index:45;pointer-events:none}
+.mmd-md-overlay>*{pointer-events:auto}
+.mmd-side-chat{position:absolute;left:8px;right:8px;bottom:8px;z-index:45;display:flex;flex-direction:column;max-height:min(420px,72%);border:.5px solid var(--dsw-alias-border-l2,#ddd);border-radius:12px;background:var(--dsw-alias-bg-layer-1,#fff);box-shadow:0 12px 32px rgba(0,0,0,.18);overflow:hidden}
+.mmd-side-chat-head{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:.5px solid var(--dsw-alias-border-l2,#eee)}
+.mmd-side-chat-title{font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-primary,#222)}
+.mmd-side-chat-file{font-size:11.5px;color:var(--dsw-alias-label-tertiary,#999);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mmd-side-chat-close{margin-left:auto;border:0;background:transparent;color:var(--dsw-alias-label-tertiary,#999);cursor:pointer;font-size:14px;line-height:1;padding:2px 4px;border-radius:4px}
+.mmd-side-chat-close:hover{background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.14));color:var(--dsw-alias-label-primary,#333)}
+.mmd-side-chat-ctx{flex:none;max-height:76px;overflow-y:auto;padding:6px 10px;border-bottom:.5px solid var(--dsw-alias-border-l2,#f0f0f0);font-size:11.5px;line-height:1.55;color:var(--dsw-alias-label-secondary,#666);white-space:pre-wrap}
+.mmd-side-chat-body{flex:1;min-height:0;overflow-y:auto;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.mmd-side-chat-empty{font-size:12px;color:var(--dsw-alias-label-tertiary,#999)}
+.mmd-side-chat-turn{max-width:86%;padding:6px 9px;border-radius:9px;font-size:12.5px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
+.mmd-side-chat-user{align-self:flex-end;background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.12));color:var(--dsw-alias-label-primary,#222)}
+.mmd-side-chat-assistant{align-self:flex-start;border:.5px solid var(--dsw-alias-border-l2,#eee);background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#222)}
+.mmd-side-chat-error{flex:none;padding:6px 10px;font-size:11.5px;color:var(--dsw-alias-state-error-primary,#b0503c)}
+.mmd-side-chat-input{flex:none;display:flex;align-items:flex-end;gap:8px;padding:8px 10px;border-top:.5px solid var(--dsw-alias-border-l2,#eee)}
+.mmd-side-chat-text{flex:1;min-height:30px;max-height:110px;resize:none;border:0;outline:none;background:transparent;font:inherit;font-size:12.5px;line-height:1.5;color:var(--dsw-alias-label-primary,#222);padding:4px 2px}
+.mmd-side-chat-text::placeholder{color:var(--dsw-alias-label-tertiary,#999)}
+.mmd-side-chat-send{flex:none;width:28px;height:28px;border-radius:99px;border:0;background:#247bbf;color:#fff;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.mmd-side-chat-send:disabled{opacity:.35;cursor:default}
+
 `;
 
-function annotateToggleIcon(size = 14) {
+function annotateToggleIcon(size = 14, key) {
   return h(
     'svg',
-    { viewBox: '0 0 16 16', width: size, height: size, 'aria-hidden': true, style: { display: 'block', flex: 'none' } },
+    { key, viewBox: '0 0 16 16', width: size, height: size, 'aria-hidden': true, style: { display: 'block', flex: 'none' } },
     h('path', {
       d: 'M1.6 5.2h4.1M1.6 8.6h2.9',
       fill: 'none',
@@ -876,6 +1069,39 @@ function annotateIcon(size = 15) {
       d: 'M5.6 9.9l4.4-4.4 1.9 1.9-4.4 4.4-2.3.4.4-2.3z',
       fill: 'currentColor',
       opacity: 0.85,
+    }),
+  );
+}
+
+/* Paperclip glyph for the annotation dialog's attachment button. */
+function attachIcon(size = 14) {
+  return h(
+    'svg',
+    { viewBox: '0 0 16 16', width: size, height: size, 'aria-hidden': true, style: { display: 'block' } },
+    h('path', {
+      d: 'M10.6 4.2L5.9 8.9a1.5 1.5 0 002.1 2.1l4.6-4.6a2.6 2.6 0 10-3.7-3.7L3.5 7.3a3.6 3.6 0 105.1 5.1l3.9-3.9',
+      fill: 'none',
+      stroke: 'currentColor',
+      strokeWidth: 1.2,
+      strokeLinecap: 'round',
+      strokeLinejoin: 'round',
+    }),
+  );
+}
+
+/* Sparkle glyph for the annotation dialog's AI assist button. */
+function sparkIcon(size = 13) {
+  return h(
+    'svg',
+    { viewBox: '0 0 16 16', width: size, height: size, 'aria-hidden': true, style: { display: 'block' } },
+    h('path', {
+      d: 'M8 1.6l1.35 3.55L12.9 6.5 9.35 7.85 8 11.4 6.65 7.85 3.1 6.5l3.55-1.35z',
+      fill: 'currentColor',
+    }),
+    h('path', {
+      d: 'M12.4 10.2l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z',
+      fill: 'currentColor',
+      opacity: 0.7,
     }),
   );
 }
@@ -931,7 +1157,7 @@ function savePinned(root, list) {
   } catch {}
 }
 
-function FilesTreeBody(props) {
+export function FilesTreeBody(props) {
   const { ctx, useTabInfo, sessionId, useSessions, renderSlot, inputActions, t } = props;
   const { tab } = useTabInfo();
   const navigation = tab.navigation;
@@ -985,12 +1211,16 @@ function FilesTreeBody(props) {
     refreshDir(root);
   };
 
-  const togglePinned = (path, isDir) => {
+  // Pin and unpin stay explicit instead of being one toggle: a context menu
+  // can outlive the state it was built from, and an explicit action must
+  // never flip the wrong way because the list changed underneath it.
+  const applyPinned = (path, isDir, want) => {
     setPinned((prev) => {
       const exists = prev.some((item) => item.path === path);
-      const next = exists
-        ? prev.filter((item) => item.path !== path)
-        : [{ path, isDir: isDir === true }, ...prev];
+      if (want === exists) return prev;
+      const next = want
+        ? [{ path, isDir: isDir === true }, ...prev]
+        : prev.filter((item) => item.path !== path);
       savePinned(root, next);
       return next;
     });
@@ -1167,8 +1397,10 @@ function FilesTreeBody(props) {
       if (name === null || name === current) return;
       await fsOp('rename', target.path, { target: joinPath(dirPath, name) });
       refreshDir(dirPath);
-    } else if (action === 'pin' || action === 'unpin') {
-      togglePinned(target.path, target.isDir);
+    } else if (action === 'pin') {
+      applyPinned(target.path, target.isDir, true);
+    } else if (action === 'unpin') {
+      applyPinned(target.path, target.isDir, false);
     } else if (action === 'delete') {
       const name = pathBasename(target.path);
       if (!(await askConfirm(t('tree.deleteConfirm', { name })))) return;
@@ -1180,6 +1412,10 @@ function FilesTreeBody(props) {
   const menuItems = (target) => {
     if (target === null) return [];
     const items = [];
+    const isPinned = pinned.some((item) => item.path === target.path);
+    // A pinned path leads with the action that undoes the pin, so a
+    // right-click on a pinned row reaches "unpin" without hunting for it.
+    if (isPinned) items.push(['unpin', t('tree.unpin')], ['sep']);
     if (target.isDir) {
       items.push(['newFile', t('tree.newFile')], ['newFolder', t('tree.newFolder')]);
     }
@@ -1190,8 +1426,7 @@ function FilesTreeBody(props) {
     items.push(['cut', t('tree.cut')], ['copy', t('tree.copy')]);
     items.push(['sep']);
     items.push(['copyPath', t('tree.copyPath')], ['copyRelativePath', t('tree.copyRelativePath')]);
-    items.push(['sep']);
-    items.push([pinned.some((item) => item.path === target.path) ? 'unpin' : 'pin', t(pinned.some((item) => item.path === target.path) ? 'tree.unpin' : 'tree.pin')]);
+    if (!isPinned) items.push(['sep'], ['pin', t('tree.pin')]);
     items.push(['sep']);
     items.push(['rename', t('tree.rename')], ['delete', t('tree.delete')]);
     return items;
@@ -1300,7 +1535,9 @@ function FilesTreeBody(props) {
         },
         onContextMenu: (event) => {
           if (root === undefined) return;
-          if (event.target instanceof Element && event.target.closest('.mmd-locate-row') !== null) return;
+          // A row that owns its own menu handles the click itself; only the
+          // empty space around the rows falls back to the workspace root.
+          if (event.target instanceof Element && event.target.closest('.mmd-locate-row, .mmd-tree-pinned-row') !== null) return;
           event.preventDefault();
           setMenu({ path: root, isDir: true, x: event.clientX, y: event.clientY });
         },
@@ -1355,7 +1592,18 @@ function FilesTreeBody(props) {
                         pinned.map((item) => {
                           const path = item.path;
                           const name = pathBasename(path) || path;
-                          return h('div', { className: 'mmd-tree-pinned-row', key: path }, [
+                          return h('div', {
+                            className: 'mmd-tree-pinned-row', key: path,
+                            onContextMenu: (event) => {
+                              // A pinned row is a target of its own. Without
+                              // this the click fell through to the tree's
+                              // fallback menu, which acts on the workspace
+                              // root instead of the pinned path.
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setMenu({ path, isDir: item.isDir, x: event.clientX, y: event.clientY });
+                            },
+                          }, [
                             h('button', {
                               type: 'button', key: 'open',
                               className: 'mmd-tree-pinned-btn',
@@ -1369,7 +1617,8 @@ function FilesTreeBody(props) {
                               type: 'button', key: 'remove',
                               className: 'mmd-tree-pin-remove',
                               title: t('tree.unpin'),
-                              onClick: () => togglePinned(path, item.isDir),
+                              'aria-label': t('tree.unpin'),
+                              onClick: () => applyPinned(path, item.isDir, false),
                             }, '×'),
                           ]);
                         }),
@@ -1551,7 +1800,7 @@ function FolderGuideIcon({ size = 26, className }) {
 }
 
 function chevron(open) {
-  return h('span', { className: 'mmd-locate-chevron', 'aria-hidden': true },
+  return h('span', { className: 'mmd-locate-chevron', key: 'chevron', 'aria-hidden': true },
     h('svg', { viewBox: '0 0 16 16', width: 12, height: 12, style: { display: 'block', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .12s' } },
       h('path', { d: 'M5.5 3.5l4.5 4.5-4.5 4.5', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' })));
 }
@@ -1699,9 +1948,120 @@ function sendToAgent(inputActions, message, readDraft) {
   setTimeout(tick, 0);
 }
 
-function InstructionPopover({ anchor, title, placeholder, value, onChange, onSubmit, onClose, t }) {
+/**
+ * The review angles the AI assist and the local templates can take.
+ *
+ * The id is what the Host understands; the label key is what the reviewer
+ * reads. The order is the order the chips show in.
+ */
+const ASSIST_INTENTS = [
+  { id: 'copy', label: 'annotate.intent.copy' },
+  { id: 'ux', label: 'annotate.intent.ux' },
+  { id: 'issue', label: 'annotate.intent.issue' },
+  { id: 'rule', label: 'annotate.intent.rule' },
+  { id: 'translate', label: 'annotate.intent.translate' },
+];
+
+/**
+ * The tasks the sent prompt can ask the Agent for.
+ *
+ * The id picks the message template; the label key is what the toolbar shows.
+ */
+const ANNOTATE_TASKS = [
+  { id: 'change', label: 'annotate.task.change', message: 'annotate.message', imageMessage: 'annotate.imageMessage' },
+  { id: 'plan', label: 'annotate.task.plan', message: 'annotate.messagePlan', imageMessage: 'annotate.imageMessagePlan' },
+  { id: 'review', label: 'annotate.task.review', message: 'annotate.messageReview', imageMessage: 'annotate.imageMessageReview' },
+];
+
+/**
+ * The template of one intent, ready for the reviewer to finish.
+ *
+ * The template is the fallback for a Host that cannot answer: it says what
+ * has to change, and the reviewer fills in the specifics.
+ * @param {Function} t - the translator.
+ * @param {string} intent - the intent id.
+ * @param {string} subject - what the annotation is about.
+ * @returns {string} the template sentence.
+ */
+function assistTemplate(t, intent, subject) {
+  const known = ASSIST_INTENTS.some((item) => item.id === intent);
+  const key = `annotate.template.${known ? intent : 'issue'}`;
+  const target = subject.trim() === '' ? t('annotate.pickTitle') : subject.trim();
+  return t(key, { text: target });
+}
+
+/**
+ * Annotation dialog: comment box plus optional attachments and AI assist.
+ *
+ * The attachment row is opt-in: a caller that passes `onAttach` gets the
+ * paperclip button, the chips and the paste handler; the other callers (the
+ * Markdown comment box) keep their current behaviour.
+ *
+ * The AI assist row is opt-in too: a caller that passes `assist` gets the
+ * sparkle button, the intent chips and the draft request. The draft lands in
+ * the same text box, so the reviewer still owns the sentence before it is
+ * sent.
+ */
+export function InstructionPopover({ anchor, title, placeholder, value, onChange, onSubmit, onClose, t, attachments = [], onAttach, onDetach, assist, submitLabel, allowEmpty = false }) {
   const inputRef = useRef(null);
+  const fileRef = useRef(null);
+  const [error, setError] = useState(null);
+  const [assistOpen, setAssistOpen] = useState(false);
+  const [intent, setIntent] = useState(ASSIST_INTENTS[0].id);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [hint, setHint] = useState(null);
   useEffect(() => { if (inputRef.current !== null) inputRef.current.focus(); }, []);
+  const attachEnabled = typeof onAttach === 'function';
+  const assistEnabled = assist !== undefined && assist !== null;
+  const addFiles = (files) => {
+    if (!attachEnabled) return;
+    const list = Array.from(files ?? []);
+    if (list.length === 0) return;
+    try {
+      setError(null);
+      onAttach(list);
+    } catch (failure) {
+      setError(t('annotate.attachFailed', { message: failure instanceof Error ? failure.message : String(failure) }));
+    }
+  };
+  const onPaste = (event) => {
+    if (!attachEnabled) return;
+    const items = event.clipboardData?.items;
+    if (items === undefined) return;
+    const files = [];
+    for (const item of items) {
+      if (item.kind !== 'file') continue;
+      const file = item.getAsFile();
+      if (file !== null) files.push(file);
+    }
+    if (files.length === 0) return;
+    event.preventDefault();
+    addFiles(files);
+  };
+  const generate = async () => {
+    if (!assistEnabled || busy) return;
+    setBusy(true);
+    setError(null);
+    setHint(null);
+    try {
+      const draft = await assist.onGenerate({ intent, note, current: value, ...(assist.context ?? {}) });
+      if (typeof draft !== 'string' || draft.trim() === '') throw new Error(t('annotate.assistFailed'));
+      onChange(draft.trim());
+      setHint(t('annotate.assistDone'));
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const applyTemplate = () => {
+    if (!assistEnabled) return;
+    const template = assist.onTemplate(intent, assist.context ?? {});
+    if (typeof template !== 'string' || template.trim() === '') return;
+    onChange(template.trim());
+    setHint(t('annotate.assistTemplateDone'));
+  };
   return createPortal(
     h('span', { className: 'mmd-pop', style: { top: `${anchor.top}px`, left: `${anchor.left}px` } }, [
       h('span', { className: 'mmd-pop-title', key: 'title' }, [
@@ -1715,21 +2075,143 @@ function InstructionPopover({ anchor, title, placeholder, value, onChange, onSub
           onClick: (event) => { event.stopPropagation(); onClose(); },
         }, '×'),
       ]),
+      attachments.length > 0
+        ? h('span', { className: 'mmd-pop-files', key: 'files' }, attachments.map((attachment) =>
+            h('span', { className: 'mmd-pop-file', key: attachment.id, title: attachment.file.name }, [
+              isImageFile(attachment.file) && attachment.url !== ''
+                ? h('img', { key: 'img', className: 'mmd-pop-file-img', src: attachment.url, alt: '' })
+                : h('span', { key: 'ico', className: 'mmd-pop-file-ico' }, attachIcon(12)),
+              h('span', { key: 'name', className: 'mmd-pop-file-name' }, attachment.file.name),
+              h('button', {
+                type: 'button',
+                key: 'del',
+                className: 'mmd-anno-del',
+                'aria-label': t('annotate.attachRemove'),
+                title: t('annotate.attachRemove'),
+                onClick: (event) => { event.stopPropagation(); onDetach?.(attachment.id); },
+              }, '×'),
+            ]),
+          ))
+        : null,
       h('textarea', {
         key: 'text', ref: inputRef, className: 'mmd-pop-text', placeholder, value, rows: 4,
         onChange: (event) => onChange(event.target.value),
+        onPaste,
         onKeyDown: (event) => {
           if (event.key === 'Escape') { event.stopPropagation(); onClose(); }
           else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); onSubmit(); }
         },
       }),
+      assistEnabled && assistOpen
+        ? h('span', { className: 'mmd-pop-assist', key: 'assist' }, [
+            h('span', { className: 'mmd-pop-assist-row', key: 'intents' }, ASSIST_INTENTS.map((item) =>
+              h('button', {
+                type: 'button',
+                key: item.id,
+                className: item.id === intent ? 'mmd-pop-chip mmd-pop-chip-on' : 'mmd-pop-chip',
+                onClick: (event) => { event.stopPropagation(); setIntent(item.id); },
+              }, t(item.label)),
+            )),
+            h('input', {
+              key: 'note',
+              type: 'text',
+              className: 'mmd-pop-note',
+              placeholder: t('annotate.assistNote'),
+              value: note,
+              onChange: (event) => setNote(event.target.value),
+            }),
+            h('span', { className: 'mmd-pop-assist-foot', key: 'foot' }, [
+              h('button', {
+                type: 'button',
+                key: 'generate',
+                className: 'mmd-pop-assist-btn',
+                disabled: busy,
+                onClick: (event) => { event.stopPropagation(); generate(); },
+              }, busy ? t('annotate.assistBusy') : t('annotate.assistGenerate')),
+              h('button', {
+                type: 'button',
+                key: 'template',
+                className: 'mmd-pop-assist-tpl',
+                disabled: busy,
+                onClick: (event) => { event.stopPropagation(); applyTemplate(); },
+              }, t('annotate.assistTemplate')),
+            ]),
+          ])
+        : null,
+      error === null ? null : h('span', { className: 'mmd-pop-error', key: 'error' }, error),
+      hint === null ? null : h('span', { className: 'mmd-pop-assist-hint', key: 'hint' }, hint),
       h('span', { className: 'mmd-pop-foot', key: 'foot' }, [
-        h('span', { className: 'mmd-pop-hint', key: 'hint' }, '⌘↵ 发送'),
-        h('button', { type: 'button', key: 'send', className: 'mmd-pop-send', onClick: onSubmit, disabled: value.trim() === '' }, t('chat.send')),
+        h('span', { className: 'mmd-pop-left', key: 'left' }, [
+          attachEnabled
+            ? h('button', {
+                type: 'button',
+                key: 'attach',
+                className: 'mmd-pop-attach',
+                title: t('annotate.attachTitle'),
+                'aria-label': t('annotate.attachTitle'),
+                onClick: (event) => { event.stopPropagation(); fileRef.current?.click(); },
+              }, attachIcon(14))
+            : null,
+          assistEnabled
+            ? h('button', {
+                type: 'button',
+                key: 'assist',
+                className: assistOpen ? 'mmd-pop-assist-toggle mmd-pop-assist-toggle-on' : 'mmd-pop-assist-toggle',
+                title: t('annotate.assistTitle'),
+                'aria-label': t('annotate.assistTitle'),
+                onClick: (event) => { event.stopPropagation(); setAssistOpen((open) => !open); },
+              }, sparkIcon(13))
+            : null,
+          h('span', { className: 'mmd-pop-hint', key: 'hint' }, '⌘↵ 发送'),
+        ]),
+        h('button', { type: 'button', key: 'send', className: 'mmd-pop-send', onClick: onSubmit, disabled: !allowEmpty && value.trim() === '' }, submitLabel ?? t('chat.send')),
       ]),
+      attachEnabled
+        ? h('input', {
+            key: 'file',
+            ref: fileRef,
+            type: 'file',
+            multiple: true,
+            className: 'mmd-pop-file-input',
+            style: { display: 'none' },
+            onChange: (event) => {
+              addFiles(event.target.files);
+              event.target.value = '';
+            },
+          })
+        : null,
     ]),
     document.body,
   );
+}
+
+/**
+ * Send one annotation message, with its attachments when there are any.
+ *
+ * Text-only annotations keep the composer path (draft plus submit), so the
+ * existing behaviour is untouched. An annotation with attachments cannot ride
+ * that path, because the composer owns the attachment registry; it goes to
+ * the session face directly with inline image parts and upload receipts.
+ */
+async function sendAnnotation(ctx, inputActions, sessionId, message, files, readDraft) {
+  if (files.length === 0) {
+    sendToAgent(inputActions, message, readDraft);
+    return { sent: true, attachmentsDropped: false };
+  }
+  const binding = typeof ctx.sessions?.binding === 'function' ? ctx.sessions.binding(sessionId) : undefined;
+  const session = binding?.session;
+  if (session === undefined || typeof session.prompt !== 'function') {
+    // No session face: the text still reaches the Agent through the composer,
+    // and the caller reports that the attachments were dropped.
+    sendToAgent(inputActions, message, readDraft);
+    return { sent: true, attachmentsDropped: true };
+  }
+  const parts = await buildAttachmentParts(ctx, sessionId, files);
+  const result = await session.prompt([...parts, { type: 'text', text: message }], 'queue');
+  if (result === null || typeof result !== 'object' || result.ok !== true) {
+    throw new Error(result?.error?.message ?? 'prompt refused');
+  }
+  return { sent: true, attachmentsDropped: false };
 }
 
 /** Add the localized "Open" label to the host's open-in-app button via CSS content. */
@@ -1759,6 +2241,32 @@ function RevealAction(props) {
   ]);
 }
 
+/**
+ * One annotation card in the list.
+ *
+ * Both annotation flows show the same card: the number, the text, the files
+ * and the two actions — rewrite the wording, or drop the annotation.
+ */
+export function AnnotationItem({ item, index, text, title, t, onEdit, onRemove }) {
+  return h('div', { className: 'mmd-anno-item' }, [
+    h('span', { className: 'mmd-anno-badge', key: 'n' }, String(index + 1)),
+    h('span', { className: 'mmd-anno-text', key: 'text', title: title ?? '' }, text),
+    (item.attachments ?? []).length > 0
+      ? h('span', { className: 'mmd-anno-files', key: 'files', title: t('annotate.attached', { count: item.attachments.length }) },
+          [attachIcon(11), h('span', { key: 'n' }, String(item.attachments.length))])
+      : null,
+    h('button', {
+      type: 'button', key: 'edit', className: 'mmd-anno-edit', 'aria-label': t('annotate.edit'),
+      title: t('annotate.editTitle'),
+      onClick: () => onEdit(index),
+    }, '✎'),
+    h('button', {
+      type: 'button', key: 'del', className: 'mmd-anno-del', 'aria-label': '删除',
+      onClick: () => onRemove(index),
+    }, '×'),
+  ]);
+}
+
 /* ------------------------------------------------------------------ */
 /* HTML annotation renderer: element picking inside a sandboxed frame. */
 /* ------------------------------------------------------------------ */
@@ -1766,8 +2274,8 @@ function RevealAction(props) {
 const HTML_ANNOTATE_ID = '@local/markdown-mermaid-preview/html-annotate';
 
 const PICKER_STYLE =
-  '.mmd-pick-hover{position:fixed;pointer-events:none;border:2px solid #6c5ce7;border-radius:3px;z-index:2147483646;display:none;background:rgba(108,92,231,.06)}' +
-  '.mmd-pick-badge{position:fixed;z-index:2147483646;min-width:18px;height:18px;border-radius:9px;background:#6c5ce7;color:#fff;font:600 11px/18px ui-sans-serif,system-ui,sans-serif;text-align:center;pointer-events:none;transform:translate(-50%,-50%)}';
+  '.mmd-pick-hover{position:fixed;pointer-events:none;border:2px solid #247bbf;border-radius:3px;z-index:2147483646;display:none;background:rgba(36,123,191,.06)}' +
+  '.mmd-pick-badge{position:fixed;z-index:2147483646;min-width:18px;height:18px;border-radius:9px;background:#247bbf;color:#fff;font:600 11px/18px ui-sans-serif,system-ui,sans-serif;text-align:center;pointer-events:none;transform:translate(-50%,-50%)}';
 
 /** Self-contained picker body; String()ed into the injected script tag. No closures. */
 function mmdPickerMain() {
@@ -1885,12 +2393,24 @@ function injectPicker(html) {
   return html + payload;
 }
 
-function annotateMessage(t, path, annotations) {
+/**
+ * The prompt that carries the annotations to the Agent.
+ *
+ * The task picks the template: the reviewer can ask for the change itself, a
+ * plan first, or an opinion only.
+ * @param {Function} t - the translator.
+ * @param {string} path - the reviewed file.
+ * @param {object[]} annotations - the annotations.
+ * @param {string} task - the task id.
+ * @returns {string} the prompt.
+ */
+function annotateMessage(t, path, annotations, task) {
   const lines = annotations.map((item, index) => {
     const where = item.info.text !== '' ? `（${item.info.path}；文本「${item.info.text}」）` : `（${item.info.path}）`;
     return `${index + 1}. <${item.info.tag}> ${where}：${item.comment}`;
   });
-  return t('annotate.message', { path, list: lines.join('\n') });
+  const template = ANNOTATE_TASKS.find((item) => item.id === task)?.message ?? 'annotate.message';
+  return t(template, { path, list: lines.join('\n') });
 }
 
 const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3];
@@ -1926,6 +2446,14 @@ function HtmlAnnotateBody(props) {
   const [annotations, setAnnotations] = useState([]);
   const [pendingPick, setPendingPick] = useState(null);
   const [pickComment, setPickComment] = useState('');
+  const [pendingFiles, setPendingFiles] = useState([]);
+  const [editIndex, setEditIndex] = useState(null);
+  const [editValue, setEditValue] = useState('');
+  const [editFiles, setEditFiles] = useState([]);
+  const [editRemoved, setEditRemoved] = useState([]);
+  const [task, setTask] = useState('change');
+  const [notice, setNotice] = useState(null);
+  const [sending, setSending] = useState(false);
   const [zoom, setZoom] = useState(1);
   const draft = typeof useInput === 'function' ? useInput((state) => state.draft) : '';
   const draftRef = useRef(draft);
@@ -1964,6 +2492,8 @@ function HtmlAnnotateBody(props) {
       if (!data || data.__mmd !== true || data.type !== 'pick') return;
       const rect = iframe.getBoundingClientRect();
       setPickComment('');
+      setPendingFiles((prev) => { revokeAttachments(prev); return []; });
+      setEditIndex(null);
       setPendingPick({
         info: data.info,
         top: Math.round(rect.top + data.y + 10),
@@ -1990,16 +2520,24 @@ function HtmlAnnotateBody(props) {
     const text = pickComment.trim();
     if (text === '' || pendingPick === null) return;
     setAnnotations((prev) => {
-      const next = [...prev, { info: pendingPick.info, comment: text }];
+      const next = [...prev, {
+        info: pendingPick.info,
+        comment: text,
+        attachments: pendingFiles,
+        anchor: { top: pendingPick.top, left: pendingPick.left },
+      }];
       pushBadges(next);
       return next;
     });
     setPendingPick(null);
     setPickComment('');
+    setPendingFiles([]);
   };
 
   const removeAnnotation = (index) => {
     setAnnotations((prev) => {
+      const target = prev[index];
+      if (target !== undefined) revokeAttachments(target.attachments);
       const next = prev.filter((_, i) => i !== index);
       pushBadges(next);
       return next;
@@ -2007,17 +2545,114 @@ function HtmlAnnotateBody(props) {
   };
 
   const clearAll = () => {
-    setAnnotations([]);
+    setAnnotations((prev) => {
+      revokeAttachments(prev.flatMap((item) => item.attachments ?? []));
+      return [];
+    });
     pushBadges([]);
   };
 
-  const sendAll = () => {
-    if (annotations.length === 0) return;
-    sendToAgent(inputActions, annotateMessage(t, shownPath, annotations), () => draftRef.current);
-    clearAll();
-    setEditing(false);
-    postToFrame({ type: 'deactivate' });
+  /**
+   * Re-open one annotation for editing.
+   *
+   * The annotation keeps its place in the list and its badge, so the numbers
+   * the reviewer already refers to do not move.
+   */
+  const startEdit = (index) => {
+    const target = annotations[index];
+    if (target === undefined) return;
+    setPendingPick(null);
+    setEditIndex(index);
+    setEditValue(target.comment);
+    setEditFiles(target.attachments ?? []);
+    setEditRemoved([]);
   };
+
+  /** Save the annotation that is open for editing. */
+  const confirmEdit = () => {
+    const text = editValue.trim();
+    if (text === '' || editIndex === null) return;
+    setAnnotations((prev) => prev.map((item, index) => (
+      index === editIndex ? { ...item, comment: text, attachments: editFiles } : item
+    )));
+    revokeAttachments(editRemoved);
+    setEditRemoved([]);
+    setEditIndex(null);
+    setEditValue('');
+    setEditFiles([]);
+  };
+
+  /** Close the editor without touching the annotation. */
+  const cancelEdit = () => {
+    setEditIndex(null);
+    setEditValue('');
+    setEditFiles([]);
+    setEditRemoved([]);
+  };
+
+  /**
+   * Detach a file from the annotation that is open for editing.
+   *
+   * The file is not released here: the annotation still points at it until
+   * the edit is saved. Saving releases it.
+   */
+  const detachEditFile = (id) => {
+    const removed = editFiles.find((attachment) => attachment.id === id);
+    if (removed === undefined) return;
+    setEditFiles((prev) => prev.filter((attachment) => attachment.id !== id));
+    setEditRemoved((prev) => [...prev, removed]);
+  };
+
+  const sendAll = async () => {
+    if (annotations.length === 0 || sending) return;
+    setSending(true);
+    setNotice(null);
+    try {
+      const outcome = await sendAnnotation(
+        ctx, inputActions, sessionId,
+        annotateMessage(t, shownPath, annotations, task),
+        collectFiles(annotations),
+        () => draftRef.current,
+      );
+      if (outcome.attachmentsDropped === true) setNotice(t('annotate.noSession'));
+      clearAll();
+      setEditing(false);
+      postToFrame({ type: 'deactivate' });
+    } catch (error) {
+      setNotice(t('annotate.sendFailed', { message: error instanceof Error ? error.message : String(error) }));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  /**
+   * The AI assist of this annotation.
+   *
+   * The Host gets the element it has to talk about and the words the
+   * reviewer already wrote; the local template is the fallback for a Host
+   * that cannot answer.
+   */
+  const assistOptions = (info, comment) => ({
+    context: {
+      kind: 'element',
+      path: shownPath,
+      tag: info?.tag ?? '',
+      selector: info?.path ?? '',
+      subject: info?.text ?? '',
+      comment: comment ?? '',
+    },
+    onGenerate: async ({ intent, note, current }) => requestDraft({
+      kind: 'element',
+      path: shownPath,
+      tag: info?.tag ?? '',
+      selector: info?.path ?? '',
+      subject: info?.text ?? '',
+      comment: current ?? comment ?? '',
+      intent,
+      note,
+    }),
+    onTemplate: (intent) => assistTemplate(t, intent, info?.text ?? ''),
+  });
 
   if (content.kind !== 'bytes') return null;
   if (srcdoc === null) return h('div', { className: 'mmd-locate-note' }, t('annotate.failed'));
@@ -2030,7 +2665,7 @@ function HtmlAnnotateBody(props) {
         type: 'button', key: 'toggle',
         className: editing ? 'mmd-reveal-tree mmd-anno-toggle mmd-anno-active' : 'mmd-reveal-tree mmd-anno-toggle',
         onClick: toggleEditing,
-      }, [annotateToggleIcon(14), h('span', { key: 'label' }, editing ? t('annotate.exit') : t('annotate.toggle'))]),
+      }, [annotateToggleIcon(14, 'icon'), h('span', { key: 'label' }, editing ? t('annotate.exit') : t('annotate.toggle'))]),
       annotations.length > 0
         ? h('span', { className: 'mmd-anno-count', key: 'count' }, t('annotate.count', { count: annotations.length }))
         : null,
@@ -2038,11 +2673,26 @@ function HtmlAnnotateBody(props) {
         ? h('button', { type: 'button', key: 'clear', className: 'mmd-reveal-tree', onClick: clearAll }, t('annotate.clear'))
         : null,
       annotations.length > 0
-        ? h('button', { type: 'button', key: 'send', className: 'mmd-pop-send', onClick: sendAll }, t('annotate.sendAll'))
+        ? h('select', {
+            key: 'task',
+            className: 'mmd-anno-task',
+            value: task,
+            title: t('annotate.taskLabel'),
+            'aria-label': t('annotate.taskLabel'),
+            onChange: (event) => setTask(event.target.value),
+          }, ANNOTATE_TASKS.map((item) => h('option', { key: item.id, value: item.id }, t(item.label))))
+        : null,
+      annotations.length > 0
+        ? h('button', {
+            type: 'button', key: 'send', className: 'mmd-pop-send', onClick: sendAll, disabled: sending,
+          }, sending ? t('annotate.sending') : t('annotate.sendAll'))
         : null,
       h('span', { className: 'mmd-editor-spacer', key: 'spacer' }),
       h(ZoomControls, { key: 'zoom', zoom, onZoom: setZoom, t }),
     ]),
+    notice === null
+      ? null
+      : h('p', { className: 'mmd-anno-notice', key: 'notice' }, notice),
     h('div', { className: 'mmd-anno-stage', key: 'stage' }, [
       h('iframe', {
         key: 'frame', ref: iframeRef, className: 'mmd-anno-frame',
@@ -2060,31 +2710,53 @@ function HtmlAnnotateBody(props) {
         : null,
       annotations.length > 0
         ? h('div', { className: 'mmd-anno-list', key: 'list' }, annotations.map((item, index) =>
-            h('div', { className: 'mmd-anno-item', key: `${item.info.idx}:${index}` }, [
-              h('span', { className: 'mmd-anno-badge', key: 'n' }, String(index + 1)),
-              h('span', { className: 'mmd-anno-text', key: 'text', title: item.info.path },
-                `${item.info.tag}${item.info.text !== '' ? ' · ' + item.info.text : ''}：${item.comment}`),
-              h('button', {
-                type: 'button', key: 'del', className: 'mmd-anno-del', 'aria-label': '删除',
-                onClick: () => removeAnnotation(index),
-              }, '×'),
-            ]),
+            h(AnnotationItem, {
+              key: `${item.info.idx}:${index}`,
+              item,
+              index,
+              title: item.info.path,
+              text: `${item.info.tag}${item.info.text !== '' ? ' · ' + item.info.text : ''}：${item.comment}`,
+              t,
+              onEdit: startEdit,
+              onRemove: removeAnnotation,
+            }),
           ))
         : null,
     ]),
-    pendingPick === null
-      ? null
-      : h(InstructionPopover, {
-          key: 'pick-pop',
-          anchor: { top: pendingPick.top, left: pendingPick.left },
-          title: `${t('annotate.pickTitle')}：<${pendingPick.info.tag}>${pendingPick.info.text !== '' ? ' · ' + pendingPick.info.text : ''}`,
+    editIndex !== null
+      ? h(InstructionPopover, {
+          key: 'edit-pop',
+          anchor: annotations[editIndex]?.anchor ?? { top: 80, left: 80 },
+          title: `${t('annotate.editHeading')}：<${annotations[editIndex]?.info.tag ?? 'div'}>${annotations[editIndex]?.info.text !== '' ? ' · ' + annotations[editIndex]?.info.text : ''}`,
           placeholder: t('annotate.placeholder'),
-          value: pickComment,
-          onChange: setPickComment,
-          onSubmit: confirmPick,
-          onClose: () => setPendingPick(null),
+          value: editValue,
+          onChange: setEditValue,
+          onSubmit: confirmEdit,
+          onClose: cancelEdit,
+          attachments: editFiles,
+          onAttach: (files) => setEditFiles((prev) => [...prev, ...createAttachments(files)]),
+          onDetach: detachEditFile,
+          submitLabel: t('annotate.save'),
+          assist: assistOptions(annotations[editIndex]?.info, editValue),
           t,
-        }),
+        })
+      : pendingPick === null
+        ? null
+        : h(InstructionPopover, {
+            key: 'pick-pop',
+            anchor: { top: pendingPick.top, left: pendingPick.left },
+            title: `${t('annotate.pickTitle')}：<${pendingPick.info.tag}>${pendingPick.info.text !== '' ? ' · ' + pendingPick.info.text : ''}`,
+            placeholder: t('annotate.placeholder'),
+            value: pickComment,
+            onChange: setPickComment,
+            onSubmit: confirmPick,
+            onClose: () => { revokeAttachments(pendingFiles); setPendingFiles([]); setPendingPick(null); },
+            attachments: pendingFiles,
+            onAttach: (files) => setPendingFiles((prev) => [...prev, ...createAttachments(files)]),
+            onDetach: (id) => setPendingFiles((prev) => dropAttachment(prev, id)),
+            assist: assistOptions(pendingPick.info, pickComment),
+            t,
+          }),
   ]);
 }
 
@@ -2674,11 +3346,422 @@ function EditMarkdownAction({ absolutePath, t }) {
   ]);
 }
 
-function MarkdownMermaidBody({ ctx, content, resourceAddress, useResource, inputActions, useInput, useSessions, sessionId, t }) {
+/* ------------------------------------------------------------------ */
+/* Reading actions: hand a selection to the chat, or ask about it.      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Put the selected text into the main composer, with the file as a reference.
+ *
+ * The reviewer keeps the last word: the draft is seeded, never sent.
+ * @param {any} inputActions - the Host's composer actions.
+ * @param {string} path - the file the selection came from.
+ * @param {string} selection - the selected text.
+ * @returns {boolean} whether the draft could be seeded.
+ */
+export function addSelectionToChat(inputActions, path, selection) {
+  if (inputActions === undefined || inputActions === null) return false;
+  const clean = toPosixPath(path).replace(/\/+$/, '');
+  const name = pathBasename(clean) || clean;
+  const mention = /\s/.test(clean) ? `@"${clean}"` : `@${clean}`;
+  const quoted = selection.split('\n').map((line) => `> ${line}`).join('\n');
+  const draft = `${mention}\n\n${quoted}\n\n`;
+  try {
+    inputActions.setDraft({
+      text: draft,
+      references: [{
+        source: 'reference',
+        ref: mention,
+        label: name,
+        appearance: 'file',
+        clipboardText: mention,
+        offset: 0,
+        length: mention.length,
+      }],
+    });
+    return true;
+  } catch {
+    try {
+      inputActions.setDraft(draft);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * The bar that follows a text selection.
+ *
+ * Two things are worth doing with a passage: hand it to the conversation, or
+ * ask about it without touching that conversation.
+ * @param {object} props - the component props.
+ * @param {object} props.anchor - where the selection is, in page coordinates.
+ * @param {Function} props.onAdd - add the selection to the chat.
+ * @param {Function} props.onAsk - ask about the selection in the side chat.
+ * @param {Function} props.t - the translator.
+ * @returns {object} the element.
+ */
+export function SelectionActions({ anchor, onAdd, onAsk, t }) {
+  const className = anchor.below === true ? 'mmd-sel-actions mmd-sel-below' : 'mmd-sel-actions';
+  return createPortal(
+    h('div', { className, style: { top: `${anchor.top}px`, left: `${anchor.left}px` } }, [
+      h('button', {
+        type: 'button', key: 'add', className: 'mmd-sel-btn',
+        title: t('chat.addSelectionTitle'), 'aria-label': t('chat.addSelection'),
+        onMouseDown: (event) => event.preventDefault(),
+        onClick: onAdd,
+      }, t('chat.addSelection')),
+      h('span', { className: 'mmd-sel-sep', key: 'sep', 'aria-hidden': true }),
+      h('button', {
+        type: 'button', key: 'ask', className: 'mmd-sel-btn',
+        title: t('chat.askSideTitle'), 'aria-label': t('chat.askSide'),
+        onMouseDown: (event) => event.preventDefault(),
+        onClick: onAsk,
+      }, t('chat.askSide')),
+    ]),
+    document.body,
+  );
+}
+
+/**
+ * The labels the Markdown renderer needs for its own chrome.
+ * @param {Function} t - the translator.
+ * @returns {object} the labels.
+ */
+function markdownLabels(t) {
+  return {
+    code: {
+      copyLabel: t('code.copy'),
+      copiedLabel: t('code.copied'),
+      toolbarLabels: {
+        codeLabel: t('codeBlock.title'),
+        wrapLabel: t('codeBlock.wrap'),
+        unwrapLabel: t('codeBlock.unwrap'),
+      },
+    },
+    footnotes: t('footnotes'),
+  };
+}
+
+/**
+ * The menu a right click opens inside the document.
+ *
+ * The floating bar that follows a selection is easy to miss, and a right click
+ * is what a reader reaches for anyway. The menu carries the same actions and
+ * keeps the clipboard reachable, because replacing the native menu would
+ * otherwise take Copy away.
+ * @param {object} props - the component props.
+ * @param {object} props.anchor - where the menu goes, in page coordinates.
+ * @param {string} props.selection - the selected text.
+ * @param {boolean} props.hasBlock - whether a block is under the pointer.
+ * @param {Function} props.onCopy - copy the selection.
+ * @param {Function} props.onAdd - add the selection to the chat.
+ * @param {Function} props.onAsk - ask about the selection in the side chat.
+ * @param {Function} props.onAnnotate - annotate the block under the pointer.
+ * @param {Function} props.onClose - close the menu.
+ * @param {Function} props.t - the translator.
+ * @returns {object} the element.
+ */
+export function SelectionMenu({ anchor, selection, hasBlock, onCopy, onAdd, onAsk, onAnnotate, onClose, t }) {
+  const items = [];
+  if (selection !== '') {
+    items.push(h('button', { type: 'button', key: 'copy', className: 'mmd-menu-item', onClick: onCopy }, t('chat.copy')));
+    items.push(h('span', { className: 'mmd-menu-sep', key: 'sep1', 'aria-hidden': true }));
+  }
+  if (selection !== '') {
+    items.push(h('button', { type: 'button', key: 'add', className: 'mmd-menu-item', onClick: onAdd }, t('chat.addSelection')));
+    items.push(h('button', { type: 'button', key: 'ask', className: 'mmd-menu-item', onClick: onAsk }, t('chat.askSide')));
+  }
+  if (hasBlock) {
+    items.push(h('span', { className: 'mmd-menu-sep', key: 'sep2', 'aria-hidden': true }));
+    items.push(h('button', { type: 'button', key: 'anno', className: 'mmd-menu-item', onClick: onAnnotate }, t('mdAnnotate.pickTitle')));
+  }
+  return createPortal(
+    h('div', {
+      className: 'mmd-menu',
+      style: { top: `${anchor.top}px`, left: `${anchor.left}px` },
+      role: 'menu',
+      onMouseDown: (event) => event.stopPropagation(),
+    }, items),
+    document.body,
+  );
+}
+
+/**
+ * The text the reader has selected inside the document.
+ * @param {Element|null} root - the document body.
+ * @returns {string} the selected text, or '' when there is none.
+ */
+function selectionTextIn(root) {
+  const selection = document.getSelection();
+  if (selection === null || selection.isCollapsed || selection.rangeCount === 0 || root === null) return '';
+  const range = selection.getRangeAt(0);
+  if (!root.contains(range.commonAncestorContainer)) return '';
+  return selection.toString().trim();
+}
+
+/**
+ * Put text on the clipboard.
+ *
+ * The clipboard API needs a secure context; the desktop app serves the page
+ * from a custom scheme, so the old command is kept as the fallback.
+ * @param {string} text - the text to copy.
+ * @returns {Promise<boolean>} whether the text was copied.
+ */
+async function copyText(text) {
+  if (text === '') return false;
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText !== undefined) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {}
+  try {
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The side chat: questions about this file that stay out of the main chat.
+ *
+ * The answer comes from the Host's model, so the conversation the reader is
+ * having is never disturbed by the question.
+ * @param {object} props - the component props.
+ * @param {string} props.path - the file the questions are about.
+ * @param {string} props.selection - the text the reader picked.
+ * @param {Function} props.onClose - close the panel.
+ * @param {Function} props.ask - the function that asks the Host.
+ * @param {Function} props.t - the translator.
+ * @returns {object} the element.
+ */
+export function SideChat({ path, selection, onClose, ask, t }) {
+  const [turns, setTurns] = useState([]);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const submit = async () => {
+    const question = text.trim();
+    if (question === '' || busy) return;
+    const history = turns.map((turn) => ({ role: turn.role, text: turn.text }));
+    setBusy(true);
+    setError(null);
+    setTurns((prev) => [...prev, { role: 'user', text: question }]);
+    setText('');
+    try {
+      const answer = await ask({ path, selection, question, history });
+      setTurns((prev) => [...prev, { role: 'assistant', text: answer }]);
+    } catch (failure) {
+      setError(t('sideChat.failed', { message: failure instanceof Error ? failure.message : String(failure) }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return h('div', { className: 'mmd-side-chat' }, [
+    h('div', { className: 'mmd-side-chat-head', key: 'head' }, [
+      h('span', { className: 'mmd-side-chat-title', key: 'title' }, t('sideChat.title')),
+      h('span', { className: 'mmd-side-chat-file', key: 'file', title: path }, path),
+      h('button', {
+        type: 'button', key: 'close', className: 'mmd-side-chat-close',
+        title: t('chat.close'), 'aria-label': t('chat.close'),
+        onClick: onClose,
+      }, '×'),
+    ]),
+    selection === '' ? null : h('div', { className: 'mmd-side-chat-ctx', key: 'ctx' }, selection),
+    h('div', { className: 'mmd-side-chat-body', key: 'body' },
+      turns.length === 0
+        ? [h('div', { className: 'mmd-side-chat-empty', key: 'empty' }, t('sideChat.empty'))]
+        : turns.map((turn, index) => h('div', {
+            key: `t:${index}`,
+            className: turn.role === 'user' ? 'mmd-side-chat-turn mmd-side-chat-user' : 'mmd-side-chat-turn mmd-side-chat-assistant',
+          }, turn.role === 'user' || MarkdownText === null
+            ? turn.text
+            : h(MarkdownText, { text: turn.text, labels: markdownLabels(t) }))),
+    ),
+    error === null ? null : h('div', { className: 'mmd-side-chat-error', key: 'error' }, error),
+    h('div', { className: 'mmd-side-chat-input', key: 'input' }, [
+      h('textarea', {
+        key: 'text', className: 'mmd-side-chat-text', rows: 2,
+        placeholder: t('sideChat.placeholder'),
+        value: text,
+        onChange: (event) => setText(event.target.value),
+        onKeyDown: (event) => {
+          if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit(); }
+        },
+      }),
+      h('button', {
+        type: 'button', key: 'send', className: 'mmd-side-chat-send',
+        title: t('sideChat.ask'), 'aria-label': t('sideChat.ask'),
+        disabled: text.trim() === '' || busy,
+        onClick: submit,
+      }, busy ? '…' : '↑'),
+    ]),
+  ]);
+}
+
+/* ------------------------------------------------------------------ */
+/* Markdown review: annotate a block of the document.                   */
+/* ------------------------------------------------------------------ */
+
+/** The blocks a reviewer may annotate in a Markdown document. */
+const ANNOTATABLE_SELECTOR = 'p,h1,h2,h3,h4,h5,h6,li,blockquote,pre,table,hr,figcaption';
+
+/**
+ * The block a click landed on.
+ *
+ * A table cell is a better unit of review than the whole table, so a click
+ * inside a cell keeps the cell.
+ * @param {EventTarget|null} target - what was clicked.
+ * @param {Element|null} root - the document body.
+ * @returns {Element|null} the block, or null when the click was not on one.
+ */
+export function pickBlock(target, root) {
+  if (target === null || target === undefined || typeof target.closest !== 'function') return null;
+  const element = target.closest(ANNOTATABLE_SELECTOR);
+  if (element === null || root === null || !root.contains(element)) return null;
+  if (element.tagName === 'TABLE') {
+    const cell = target.closest('td,th');
+    if (cell !== null && root.contains(cell)) return cell;
+  }
+  return element;
+}
+
+/**
+ * Where a block sits in the document, in words.
+ * @param {Element} element - the block.
+ * @returns {string} the path.
+ */
+function describeBlock(element) {
+  const parts = [];
+  let current = element;
+  while (current !== null && current.tagName !== 'BODY' && parts.length < 5) {
+    let part = current.tagName.toLowerCase();
+    const parent = current.parentElement;
+    if (parent !== null) {
+      const same = [...parent.children].filter((child) => child.tagName === current.tagName);
+      if (same.length > 1) part += `:nth-of-type(${same.indexOf(current) + 1})`;
+    }
+    parts.unshift(part);
+    current = parent;
+  }
+  return parts.join(' > ');
+}
+
+/**
+ * The text of a block, short enough to be quoted in a prompt.
+ * @param {Element} element - the block.
+ * @returns {string} the text.
+ */
+function blockText(element) {
+  const raw = (element.textContent ?? '').replace(/\s+/g, ' ').trim();
+  return raw.length > 120 ? `${raw.slice(0, 120)}…` : raw;
+}
+
+/**
+ * The path from the document root to one element.
+ *
+ * The path survives a re-render of the Markdown, an element reference does
+ * not: the numbers are the children of every parent, so the same block is
+ * found again after the content is laid out again.
+ * @param {Element} root - the document root.
+ * @param {Element} element - the element to remember.
+ * @returns {number[]|null} the path, or null when the element is not in the root.
+ */
+export function elementPath(root, element) {
+  const path = [];
+  let node = element;
+  while (node !== null && node !== root) {
+    const parent = node.parentElement;
+    if (parent === null) return null;
+    path.unshift([...parent.children].indexOf(node));
+    node = parent;
+  }
+  return node === root ? path : null;
+}
+
+/**
+ * The element a path points at.
+ * @param {Element|null} root - the document root.
+ * @param {number[]|null} path - the path.
+ * @returns {Element|null} the element, or null when the path no longer fits.
+ */
+export function resolvePath(root, path) {
+  if (root === null || !Array.isArray(path)) return null;
+  let node = root;
+  for (const index of path) {
+    const children = node.children;
+    if (children === undefined || index < 0 || index >= children.length) return null;
+    node = children[index];
+  }
+  return node;
+}
+
+/**
+ * Where an annotated block sits, in the coordinates of the document root.
+ * @param {Element|null} root - the document root.
+ * @param {number[]|null} path - the path of the block.
+ * @returns {object|null} the box, or null when the block is gone.
+ */
+function measureBlock(root, path) {
+  const element = resolvePath(root, path);
+  if (element === null) return null;
+  const base = root.getBoundingClientRect();
+  const rect = element.getBoundingClientRect();
+  return {
+    top: rect.top - base.top,
+    left: rect.left - base.left,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+/**
+ * The prompt that carries the Markdown annotations to the Agent.
+ *
+ * A block the reviewer only marked has no words of its own, so the prompt
+ * says so instead of pretending there is a request.
+ * @param {Function} t - the translator.
+ * @param {string} path - the file the annotations belong to.
+ * @param {object[]} annotations - the annotations.
+ * @param {string} task - the task id.
+ * @returns {string} the prompt.
+ */
+export function markdownAnnotateMessage(t, path, annotations, task) {
+  const lines = annotations.map((item, index) => {
+    const where = item.info.text !== '' ? `（${item.info.path}；文本「${item.info.text}」）` : `（${item.info.path}）`;
+    const comment = (item.comment ?? '').trim();
+    return comment === ''
+      ? `${index + 1}. <${item.info.tag}> ${where}（评审人只标记了这一段，没有写具体要求）`
+      : `${index + 1}. <${item.info.tag}> ${where}：${comment}`;
+  });
+  const template = ANNOTATE_TASKS.find((item) => item.id === task)?.message ?? 'annotate.message';
+  return t(template, { path, list: lines.join('\n') });
+}
+
+export function MarkdownMermaidBody({ ctx, content, resourceAddress, useResource, inputActions, useInput, useSessions, sessionId, t }) {
   const rootRef = useRef(null);
   const absolutePath = useResource(resourceAddress).value?.absolutePath;
-  const [comment, setComment] = useState(null);
-  const [commentDraft, setCommentDraft] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [sideChat, setSideChat] = useState(null);
+  const [annotating, setAnnotating] = useState(false);
+  const [mdAnnotations, setMdAnnotations] = useState([]);
+  const [pendingPick, setPendingPick] = useState(null);
+  const [pickComment, setPickComment] = useState('');
+  const [pendingFiles, setPendingFiles] = useState([]);
+  const [editIndex, setEditIndex] = useState(null);
+  const [editValue, setEditValue] = useState('');
+  const [editFiles, setEditFiles] = useState([]);
+  const [editRemoved, setEditRemoved] = useState([]);
+  const [mdTask, setMdTask] = useState('change');
+  const [mdNotice, setMdNotice] = useState(null);
+  const [mdSending, setMdSending] = useState(false);
+  const [showList, setShowList] = useState(false);
+  const [layoutTick, setLayoutTick] = useState(0);
+  const [menu, setMenu] = useState(null);
   const [editing, setEditing] = useState(false);
   const [editorHtml, setEditorHtml] = useState('');
   const [saving, setSaving] = useState(false);
@@ -2699,30 +3782,31 @@ function MarkdownMermaidBody({ ctx, content, resourceAddress, useResource, input
     [absolutePath],
   );
 
-  // Track a text selection inside this document and offer "Comment to chat".
+  // Track a text selection inside this document and offer the two things a
+  // reader can do with it: hand it to the chat, or ask about it aside.
   useEffect(() => {
     const onSelection = () => {
       const selection = document.getSelection();
       const root = rootRef.current;
       if (selection === null || selection.isCollapsed || selection.rangeCount === 0 || root === null) {
-        setComment(null);
+        setSelected(null);
         return;
       }
       const range = selection.getRangeAt(0);
       if (!root.contains(range.commonAncestorContainer)) {
-        setComment(null);
+        setSelected(null);
         return;
       }
       const text = selection.toString().trim();
       if (text === '') {
-        setComment(null);
+        setSelected(null);
         return;
       }
       const rect = range.getBoundingClientRect();
       const next = { text, top: Math.round(rect.top), left: Math.round(rect.left + rect.width / 2) };
-      setComment((prev) => (prev !== null && prev.text === next.text && prev.top === next.top && prev.left === next.left ? prev : next));
+      setSelected((prev) => (prev !== null && prev.text === next.text && prev.top === next.top && prev.left === next.left ? prev : next));
     };
-    const onScroll = () => setComment(null);
+    const onScroll = () => setSelected(null);
     document.addEventListener('selectionchange', onSelection);
     window.addEventListener('scroll', onScroll, true);
     return () => {
@@ -2731,21 +3815,71 @@ function MarkdownMermaidBody({ ctx, content, resourceAddress, useResource, input
     };
   }, []);
 
+  // A right click inside the document opens the same actions, and keeps Copy
+  // in reach: replacing the native menu would otherwise take it away.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (root === null) return undefined;
+    const onContextMenu = (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (target === null || !root.contains(target)) return;
+      const selection = selectionTextIn(root);
+      const block = pickBlock(target, root);
+      if (selection === '' && block === null) return;
+      event.preventDefault();
+      setMenu({
+        top: Math.round(event.clientY),
+        left: Math.round(event.clientX),
+        selection,
+        block,
+      });
+    };
+    root.addEventListener('contextmenu', onContextMenu);
+    return () => root.removeEventListener('contextmenu', onContextMenu);
+  }, []);
+
+  // The menu closes as soon as the reader looks away from it.
+  useEffect(() => {
+    if (menu === null) return undefined;
+    const onPointerDown = (event) => {
+      if (event.target instanceof Element && event.target.closest('.mmd-menu') !== null) return;
+      setMenu(null);
+    };
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setMenu(null);
+    };
+    const onScroll = () => setMenu(null);
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  }, [menu]);
+
+  // The marks sit on the blocks they belong to, so they follow the layout.
+  useEffect(() => {
+    const bump = () => setLayoutTick((value) => value + 1);
+    bump();
+    window.addEventListener('resize', bump);
+    // The side chat and the annotation list are pinned to the pane, so they
+    // have to follow it when the document scrolls underneath them.
+    window.addEventListener('scroll', bump, true);
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(bump) : null;
+    if (rootRef.current !== null) observer?.observe(rootRef.current);
+    return () => {
+      window.removeEventListener('resize', bump);
+      window.removeEventListener('scroll', bump, true);
+      observer?.disconnect();
+    };
+  }, []);
+
   const text = content.kind === 'text' ? content.text : '';
   const split = useMemo(() => splitFrontmatter(text), [text]);
   const segments = useMemo(() => splitMermaid(split?.body ?? text), [split, text]);
-  const labels = useMemo(() => ({
-    code: {
-      copyLabel: t('code.copy'),
-      copiedLabel: t('code.copied'),
-      toolbarLabels: {
-        codeLabel: t('codeBlock.title'),
-        wrapLabel: t('codeBlock.wrap'),
-        unwrapLabel: t('codeBlock.unwrap'),
-      },
-    },
-    footnotes: t('footnotes'),
-  }), [t]);
+  const labels = useMemo(() => markdownLabels(t), [t]);
 
   useLayoutEffect(() => {
     if (rootRef.current !== null) upgradeBreaks(rootRef.current);
@@ -2916,60 +4050,346 @@ function MarkdownMermaidBody({ ctx, content, resourceAddress, useResource, input
         }),
       ]);
 
-  const commentButton =
-    comment === null || commentDraft !== null
-      ? null
-      : createPortal(
-          h('button', {
-            type: 'button', key: 'comment-btn', className: 'mmd-comment-btn',
-            style: { top: `${Math.max(4, comment.top - 38)}px`, left: `${comment.left}px` },
-            title: t('chat.commentTitle'),
-            onMouseDown: (event) => event.preventDefault(),
-            onClick: () => {
-              setCommentDraft({
-                selection: comment.text,
-                top: Math.max(4, comment.top - 38),
-                left: Math.min(Math.max(12, comment.left - 170), window.innerWidth - 360),
-                value: '',
-              });
-              setComment(null);
-              document.getSelection()?.removeAllRanges();
-            },
-          }, [chatBubbleIcon(14), h('span', { key: 'text' }, t('chat.comment'))]),
-          document.body,
-        );
-  const commentPopover =
-    commentDraft === null
-      ? null
-      : h(InstructionPopover, {
-          key: 'comment-pop',
-          anchor: { top: commentDraft.top, left: commentDraft.left },
-          title: t('chat.commentTitle'),
-          placeholder: t('chat.commentPlaceholder'),
-          value: commentDraft.value,
-          onChange: (value) => setCommentDraft((prev) => (prev === null ? prev : { ...prev, value })),
-          onSubmit: () => {
-            const textValue = commentDraft.value.trim();
-            if (textValue === '') return;
-            sendToAgent(
-              inputActions,
-              t('chat.commentTemplate', { path: shownPath, selection: commentDraft.selection, comment: textValue }),
-              () => draftRef.current,
-            );
-            setCommentDraft(null);
-          },
-          onClose: () => setCommentDraft(null),
-          t,
-        });
+  // The reviewer annotates a block of the document: a paragraph, a heading, a
+  // list item, a table cell. The mark keeps the number the reviewer already
+  // refers to, so the list, the marks and the prompt always agree.
+  const clearMdAnnotations = () => {
+    setMdAnnotations((prev) => {
+      revokeAttachments(prev.flatMap((item) => item.attachments ?? []));
+      return [];
+    });
+    setShowList(false);
+  };
 
-  return h('div', { className: 'mmd-document', 'data-document-markdown-mermaid': true, ref: rootRef }, [
+  const removeMdAnnotation = (index) => {
+    setMdAnnotations((prev) => {
+      const target = prev[index];
+      if (target !== undefined) revokeAttachments(target.attachments);
+      return prev.filter((_, i) => i !== index);
+    });
+  };
+
+  const startMdEdit = (index) => {
+    const target = mdAnnotations[index];
+    if (target === undefined) return;
+    setPendingPick(null);
+    setEditIndex(index);
+    setEditValue(target.comment ?? '');
+    setEditFiles(target.attachments ?? []);
+    setEditRemoved([]);
+  };
+
+  const confirmMdEdit = () => {
+    if (editIndex === null) return;
+    setMdAnnotations((prev) => prev.map((item, index) => (
+      index === editIndex ? { ...item, comment: editValue.trim(), attachments: editFiles } : item
+    )));
+    revokeAttachments(editRemoved);
+    setEditRemoved([]);
+    setEditIndex(null);
+    setEditValue('');
+    setEditFiles([]);
+  };
+
+  const cancelMdEdit = () => {
+    setEditIndex(null);
+    setEditValue('');
+    setEditFiles([]);
+    setEditRemoved([]);
+  };
+
+  const startPick = (block) => {
+    if (block === null || block === undefined) return;
+    const rect = block.getBoundingClientRect();
+    setPickComment('');
+    setPendingFiles((prev) => { revokeAttachments(prev); return []; });
+    setEditIndex(null);
+    setPendingPick({
+      info: { tag: block.tagName.toLowerCase(), path: describeBlock(block), text: blockText(block) },
+      path: elementPath(rootRef.current, block),
+      anchor: {
+        top: Math.round(rect.top + 10),
+        left: Math.round(Math.min(Math.max(12, rect.left - 170), window.innerWidth - 360)),
+      },
+    });
+  };
+
+  const confirmPick = () => {
+    if (pendingPick === null) return;
+    setMdAnnotations((prev) => [...prev, {
+      info: pendingPick.info,
+      comment: pickComment.trim(),
+      attachments: pendingFiles,
+      path: pendingPick.path,
+      anchor: pendingPick.anchor,
+    }]);
+    setPendingPick(null);
+    setPickComment('');
+    setPendingFiles([]);
+  };
+
+  const sendMdAnnotations = async () => {
+    if (mdAnnotations.length === 0 || mdSending) return;
+    setMdSending(true);
+    setMdNotice(null);
+    try {
+      const outcome = await sendAnnotation(
+        ctx, inputActions, sessionId,
+        markdownAnnotateMessage(t, shownPath, mdAnnotations, mdTask),
+        collectFiles(mdAnnotations),
+        () => draftRef.current,
+      );
+      if (outcome.attachmentsDropped === true) setMdNotice(t('annotate.noSession'));
+      clearMdAnnotations();
+    } catch (error) {
+      setMdNotice(t('annotate.sendFailed', { message: error instanceof Error ? error.message : String(error) }));
+    } finally {
+      setMdSending(false);
+    }
+  };
+
+  /** The AI assist of a Markdown annotation. */
+  const mdAssistOptions = (info, comment) => ({
+    context: {
+      kind: 'element',
+      path: shownPath,
+      tag: info?.tag ?? 'div',
+      selector: info?.path ?? '',
+      subject: info?.text ?? '',
+      comment: comment ?? '',
+    },
+    onGenerate: async ({ intent, note, current }) => requestDraft({
+      kind: 'element',
+      path: shownPath,
+      tag: info?.tag ?? 'div',
+      selector: info?.path ?? '',
+      subject: info?.text ?? '',
+      comment: current ?? comment ?? '',
+      intent,
+      note,
+    }),
+    onTemplate: (intent) => assistTemplate(t, intent, info?.text ?? ''),
+  });
+
+  const badgeRects = useMemo(
+    () => mdAnnotations.map((item) => measureBlock(rootRef.current, item.path)),
+    [mdAnnotations, layoutTick, content],
+  );
+
+  // The box the preview occupies on the page. The side chat and the list of
+  // annotations belong to the pane, not to the document: a long document
+  // would otherwise carry them out of sight.
+  const previewBox = useMemo(() => {
+    const root = rootRef.current;
+    if (root === null) return null;
+    // The pane is the visible window onto the document; the document itself is
+    // as tall as its content, and a panel pinned to its bottom would be out of
+    // sight in a long file.
+    const host = root.closest('[data-sidebar-right-panel]') ?? root;
+    const rect = host.getBoundingClientRect();
+    const top = Math.max(rect.top, 0);
+    const height = Math.min(rect.bottom, window.innerHeight) - top;
+    if (rect.width <= 0 || height <= 0) return null;
+    return {
+      left: `${Math.round(rect.left)}px`,
+      top: `${Math.round(top)}px`,
+      width: `${Math.round(rect.width)}px`,
+      height: `${Math.round(height)}px`,
+    };
+  }, [layoutTick, content, sideChat, showList]);
+
+  const badgeLayer = mdAnnotations.length === 0
+    ? null
+    : h('div', { className: 'mmd-md-layer', key: 'layer' }, badgeRects.map((rect, index) => (
+        rect === null
+          ? null
+          : h(Fragment, { key: `mark:${index}` }, [
+              h('div', {
+                className: 'mmd-md-outline', key: 'o',
+                style: { top: `${rect.top}px`, left: `${rect.left}px`, width: `${rect.width}px`, height: `${rect.height}px` },
+              }),
+              h('span', {
+                className: 'mmd-md-mark', key: 'm',
+                style: { top: `${rect.top}px`, left: `${rect.left}px` },
+              }, String(index + 1)),
+            ])
+      )));
+
+  const reviewBar = h('div', { className: 'mmd-md-bar', key: 'bar' }, [
+    h('button', {
+      type: 'button', key: 'toggle',
+      className: annotating ? 'mmd-reveal-tree mmd-anno-toggle mmd-anno-active' : 'mmd-reveal-tree mmd-anno-toggle',
+      onClick: () => { setAnnotating((on) => !on); setPendingPick(null); setShowList(false); },
+    }, [annotateToggleIcon(14, 'icon'), h('span', { key: 'label' }, annotating ? t('mdAnnotate.hint') : t('mdAnnotate.toggle'))]),
+    mdAnnotations.length > 0
+      ? h('button', {
+          type: 'button', key: 'count', className: 'mmd-anno-pill',
+          title: t('annotate.count', { count: mdAnnotations.length }),
+          onClick: () => setShowList((on) => !on),
+        }, [
+          h('span', { className: 'mmd-anno-pill-icon', key: 'i' }, chatBubbleIcon(13)),
+          h('span', { key: 'n' }, mdAnnotations.length === 1 ? t('annotate.countOne') : t('annotate.count', { count: mdAnnotations.length })),
+        ])
+      : null,
+    mdAnnotations.length > 0
+      ? h('button', { type: 'button', key: 'clear', className: 'mmd-reveal-tree', onClick: clearMdAnnotations }, t('annotate.clear'))
+      : null,
+    mdAnnotations.length > 0
+      ? h('select', {
+          key: 'task', className: 'mmd-anno-task', value: mdTask,
+          title: t('annotate.taskLabel'), 'aria-label': t('annotate.taskLabel'),
+          onChange: (event) => setMdTask(event.target.value),
+        }, ANNOTATE_TASKS.map((item) => h('option', { key: item.id, value: item.id }, t(item.label))))
+      : null,
+    mdAnnotations.length > 0
+      ? h('button', {
+          type: 'button', key: 'send', className: 'mmd-pop-send', disabled: mdSending, onClick: sendMdAnnotations,
+        }, mdSending ? t('annotate.sending') : t('annotate.sendAll'))
+      : null,
+    h('span', { className: 'mmd-md-bar-spacer', key: 'spacer' }),
+    mdNotice === null ? null : h('span', { className: 'mmd-anno-notice', key: 'notice' }, mdNotice),
+  ]);
+
+  const annotationList = showList && mdAnnotations.length > 0
+    ? h('div', { className: 'mmd-anno-list', key: 'list' }, mdAnnotations.map((item, index) =>
+        h(AnnotationItem, {
+          key: `${index}:${item.info.path}`,
+          item,
+          index,
+          title: item.info.path,
+          text: `${item.info.tag}${item.info.text !== '' ? ' · ' + item.info.text : ''}${(item.comment ?? '') !== '' ? '：' + item.comment : ''}`,
+          t,
+          onEdit: startMdEdit,
+          onRemove: removeMdAnnotation,
+        })))
+    : null;
+
+  const selectionMenu = menu === null
+    ? null
+    : h(SelectionMenu, {
+        key: 'menu',
+        anchor: { top: menu.top, left: menu.left },
+        selection: menu.selection,
+        hasBlock: menu.block !== null,
+        onCopy: () => { copyText(menu.selection); setMenu(null); },
+        onAdd: () => { addSelectionToChat(inputActions, shownPath, menu.selection); setMenu(null); },
+        onAsk: () => { setSideChat({ selection: menu.selection }); setMenu(null); },
+        onAnnotate: () => { setAnnotating(true); startPick(menu.block); setMenu(null); },
+        t,
+      });
+
+  const selectionActions = selected === null || annotating || menu !== null
+    ? null
+    : createPortal(
+        h(SelectionActions, {
+          key: 'sel-actions',
+          anchor: {
+            top: selected.top < 56 ? selected.top + 30 : selected.top - 8,
+            left: selected.left,
+            below: selected.top < 56,
+          },
+          onAdd: () => {
+            addSelectionToChat(inputActions, shownPath, selected.text);
+            setSelected(null);
+            document.getSelection()?.removeAllRanges();
+          },
+          onAsk: () => {
+            setSideChat({ selection: selected.text });
+            setSelected(null);
+            document.getSelection()?.removeAllRanges();
+          },
+          t,
+        }),
+        document.body,
+        'sel-actions',
+      );
+
+  const sideChatPanel = sideChat === null
+    ? null
+    : h(SideChat, {
+        key: 'side-chat',
+        path: shownPath,
+        selection: sideChat.selection ?? '',
+        onClose: () => setSideChat(null),
+        ask: (payload) => requestAnswer({ ...payload, path: shownPath, content: text }),
+        t,
+      });
+
+  const overlay = previewBox === null || (annotationList === null && sideChatPanel === null)
+    ? null
+    : createPortal(
+        h('div', { className: 'mmd-md-overlay', style: previewBox, key: 'overlay' }, [
+          annotationList,
+          sideChatPanel,
+        ]),
+        document.body,
+        'md-overlay',
+      );
+
+  const pickPopover = pendingPick === null
+    ? null
+    : h(InstructionPopover, {
+        key: 'pick-pop',
+        anchor: pendingPick.anchor,
+        title: `${t('mdAnnotate.pickTitle')}：<${pendingPick.info.tag}>${pendingPick.info.text !== '' ? ' · ' + pendingPick.info.text : ''}`,
+        placeholder: t('mdAnnotate.placeholder'),
+        value: pickComment,
+        onChange: setPickComment,
+        onSubmit: confirmPick,
+        onClose: () => { revokeAttachments(pendingFiles); setPendingFiles([]); setPendingPick(null); },
+        attachments: pendingFiles,
+        onAttach: (files) => setPendingFiles((prev) => [...prev, ...createAttachments(files)]),
+        onDetach: (id) => setPendingFiles((prev) => dropAttachment(prev, id)),
+        assist: mdAssistOptions(pendingPick.info, pickComment),
+        allowEmpty: true,
+        t,
+      });
+
+  const editPopover = editIndex === null
+    ? null
+    : h(InstructionPopover, {
+        key: 'edit-pop',
+        anchor: mdAnnotations[editIndex]?.anchor ?? { top: 80, left: 80 },
+        title: `${t('annotate.editHeading')}：<${mdAnnotations[editIndex]?.info.tag ?? 'div'}>${mdAnnotations[editIndex]?.info.text !== '' ? ' · ' + mdAnnotations[editIndex]?.info.text : ''}`,
+        placeholder: t('mdAnnotate.placeholder'),
+        value: editValue,
+        onChange: setEditValue,
+        onSubmit: confirmMdEdit,
+        onClose: cancelMdEdit,
+        attachments: editFiles,
+        onAttach: (files) => setEditFiles((prev) => [...prev, ...createAttachments(files)]),
+        onDetach: (id) => setEditFiles((prev) => dropAttachment(prev, id)),
+        submitLabel: t('annotate.save'),
+        assist: mdAssistOptions(mdAnnotations[editIndex]?.info, editValue),
+        allowEmpty: true,
+        t,
+      });
+
+  return h('div', {
+    className: annotating ? 'mmd-document mmd-picking' : 'mmd-document',
+    'data-document-markdown-mermaid': true,
+    ref: rootRef,
+    onMouseDown: annotating
+      ? (event) => {
+          if (pickBlock(event.target, rootRef.current) !== null) event.preventDefault();
+        }
+      : undefined,
+    onClick: annotating
+      ? (event) => startPick(pickBlock(event.target, rootRef.current))
+      : undefined,
+  }, [
     h('style', { key: 'style' }, STYLE),
     h(AiChatFab, { key: 'fab', ctx, sessionId, inputActions, useInput, t }),
     editButton,
     editorView,
+    editing ? null : reviewBar,
     ...(editing ? [] : children),
-    editing ? null : commentButton,
-    editing ? null : commentPopover,
+    editing ? null : badgeLayer,
+    editing ? null : overlay,
+    editing ? null : selectionMenu,
+    editing ? null : selectionActions,
+    editing ? null : pickPopover,
+    editing ? null : editPopover,
   ]);
 }
 
@@ -2979,7 +4399,21 @@ function MarkdownMermaidBody({ ctx, content, resourceAddress, useResource, input
 
 const IMAGE_ANNOTATE_ID = '@local/markdown-mermaid-preview/image-annotate';
 
-function imageAnnotateMessage(t, path, regions) {
+/**
+ * The place an image region covers, in the words the prompt uses.
+ * @param {Function} t - the translator.
+ * @param {object} [region] - the region, with x, y, w and h in fractions.
+ * @returns {string} the description, or an empty string without a region.
+ */
+function regionArea(t, region) {
+  if (region === undefined || region === null) return '';
+  const pct = (value) => Math.round(value * 100);
+  return t('annotate.region', {
+    x: pct(region.x), x2: pct(region.x + region.w), y: pct(region.y), y2: pct(region.y + region.h),
+  });
+}
+
+function imageAnnotateMessage(t, path, regions, task) {
   const list = regions.map((item, index) => {
     const pct = (value) => Math.round(value * 100);
     const area = t('annotate.region', {
@@ -2987,7 +4421,8 @@ function imageAnnotateMessage(t, path, regions) {
     });
     return `${index + 1}. ${area}：${item.comment}`;
   });
-  return t('annotate.imageMessage', { path, list: list.join('\n') });
+  const template = ANNOTATE_TASKS.find((item) => item.id === task)?.imageMessage ?? 'annotate.imageMessage';
+  return t(template, { path, list: list.join('\n') });
 }
 
 function ImageAnnotateBody(props) {
@@ -2999,6 +4434,14 @@ function ImageAnnotateBody(props) {
   const [drag, setDrag] = useState(null);
   const [pending, setPending] = useState(null);
   const [comment, setComment] = useState('');
+  const [pendingFiles, setPendingFiles] = useState([]);
+  const [editIndex, setEditIndex] = useState(null);
+  const [editValue, setEditValue] = useState('');
+  const [editFiles, setEditFiles] = useState([]);
+  const [editRemoved, setEditRemoved] = useState([]);
+  const [task, setTask] = useState('change');
+  const [notice, setNotice] = useState(null);
+  const [sending, setSending] = useState(false);
   const [zoom, setZoom] = useState(1);
   const stageRef = useRef(null);
   const draft = typeof useInput === 'function' ? useInput((state) => state.draft) : '';
@@ -3054,6 +4497,7 @@ function ImageAnnotateBody(props) {
     setDrag(null);
     if (w < 0.01 || h < 0.01) return;
     setComment('');
+    setPendingFiles((prev) => { revokeAttachments(prev); return []; });
     setPending({
       region: { x, y, w, h },
       top: Math.min(Math.max(12, event.clientY + 12), window.innerHeight - 220),
@@ -3064,18 +4508,121 @@ function ImageAnnotateBody(props) {
   const confirmRegion = () => {
     const text = comment.trim();
     if (text === '' || pending === null) return;
-    setRegions((prev) => [...prev, { ...pending.region, comment: text }]);
+    setRegions((prev) => [...prev, { ...pending.region, comment: text, attachments: pendingFiles, anchor: { top: pending.top, left: pending.left } }]);
     setPending(null);
     setComment('');
+    setPendingFiles([]);
   };
 
-  const removeRegion = (index) => setRegions((prev) => prev.filter((_, i) => i !== index));
-  const clearAll = () => setRegions([]);
-  const sendAll = () => {
-    if (regions.length === 0) return;
-    sendToAgent(inputActions, imageAnnotateMessage(t, shownPath, regions), () => draftRef.current);
-    setRegions([]);
-    setEditing(false);
+  const removeRegion = (index) => setRegions((prev) => {
+    const target = prev[index];
+    if (target !== undefined) revokeAttachments(target.attachments);
+    return prev.filter((_, i) => i !== index);
+  });
+
+  /**
+   * Re-open one region for editing.
+   *
+   * The region keeps its place in the list and its badge, so the numbers the
+   * reviewer already refers to do not move.
+   */
+  const startEdit = (index) => {
+    const target = regions[index];
+    if (target === undefined) return;
+    setPending(null);
+    setEditIndex(index);
+    setEditValue(target.comment);
+    setEditFiles(target.attachments ?? []);
+    setEditRemoved([]);
+  };
+
+  /** Save the region that is open for editing. */
+  const confirmEdit = () => {
+    const text = editValue.trim();
+    if (text === '' || editIndex === null) return;
+    setRegions((prev) => prev.map((item, index) => (
+      index === editIndex ? { ...item, comment: text, attachments: editFiles } : item
+    )));
+    revokeAttachments(editRemoved);
+    setEditRemoved([]);
+    setEditIndex(null);
+    setEditValue('');
+    setEditFiles([]);
+  };
+
+  /** Close the editor without touching the region. */
+  const cancelEdit = () => {
+    setEditIndex(null);
+    setEditValue('');
+    setEditFiles([]);
+    setEditRemoved([]);
+  };
+
+  /**
+   * Detach a file from the region that is open for editing.
+   *
+   * The file is not released here: the region still points at it until the
+   * edit is saved. Saving releases it.
+   */
+  const detachEditFile = (id) => {
+    const removed = editFiles.find((attachment) => attachment.id === id);
+    if (removed === undefined) return;
+    setEditFiles((prev) => prev.filter((attachment) => attachment.id !== id));
+    setEditRemoved((prev) => [...prev, removed]);
+  };
+  const clearAll = () => setRegions((prev) => {
+    revokeAttachments(prev.flatMap((item) => item.attachments ?? []));
+    return [];
+  });
+  const sendAll = async () => {
+    if (regions.length === 0 || sending) return;
+    setSending(true);
+    setNotice(null);
+    try {
+      const outcome = await sendAnnotation(
+        ctx, inputActions, sessionId,
+        imageAnnotateMessage(t, shownPath, regions, task),
+        collectFiles(regions),
+        () => draftRef.current,
+      );
+      if (outcome.attachmentsDropped === true) setNotice(t('annotate.noSession'));
+      clearAll();
+      setEditing(false);
+    } catch (error) {
+      setNotice(t('annotate.sendFailed', { message: error instanceof Error ? error.message : String(error) }));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  /**
+   * The AI assist of this region.
+   *
+   * The Host gets the area it has to talk about and the words the reviewer
+   * already wrote; the local template is the fallback for a Host that cannot
+   * answer.
+   */
+  const assistOptions = (region, comment) => {
+    const area = regionArea(t, region);
+    return {
+      context: {
+        kind: 'region',
+        path: shownPath,
+        area,
+        subject: '',
+        comment: comment ?? '',
+      },
+      onGenerate: async ({ intent, note, current }) => requestDraft({
+        kind: 'region',
+        path: shownPath,
+        area,
+        subject: '',
+        comment: current ?? comment ?? '',
+        intent,
+        note,
+      }),
+      onTemplate: (intent) => assistTemplate(t, intent, area),
+    };
   };
 
   if (content.kind !== 'bytes') return null;
@@ -3098,7 +4645,7 @@ function ImageAnnotateBody(props) {
         type: 'button', key: 'toggle',
         className: editing ? 'mmd-reveal-tree mmd-anno-toggle mmd-anno-active' : 'mmd-reveal-tree mmd-anno-toggle',
         onClick: () => { setEditing((value) => !value); setPending(null); },
-      }, [annotateToggleIcon(14), h('span', { key: 'label' }, editing ? t('annotate.exit') : t('annotate.toggle'))]),
+      }, [annotateToggleIcon(14, 'icon'), h('span', { key: 'label' }, editing ? t('annotate.exit') : t('annotate.toggle'))]),
       editing && regions.length === 0 && dragRect === null && pending === null
         ? h('span', { className: 'mmd-anno-count', key: 'hint' }, t('annotate.dragHint'))
         : null,
@@ -3109,11 +4656,26 @@ function ImageAnnotateBody(props) {
         ? h('button', { type: 'button', key: 'clear', className: 'mmd-reveal-tree', onClick: clearAll }, t('annotate.clear'))
         : null,
       regions.length > 0
-        ? h('button', { type: 'button', key: 'send', className: 'mmd-pop-send', onClick: sendAll }, t('annotate.sendAll'))
+        ? h('select', {
+            key: 'task',
+            className: 'mmd-anno-task',
+            value: task,
+            title: t('annotate.taskLabel'),
+            'aria-label': t('annotate.taskLabel'),
+            onChange: (event) => setTask(event.target.value),
+          }, ANNOTATE_TASKS.map((item) => h('option', { key: item.id, value: item.id }, t(item.label))))
+        : null,
+      regions.length > 0
+        ? h('button', {
+            type: 'button', key: 'send', className: 'mmd-pop-send', onClick: sendAll, disabled: sending,
+          }, sending ? t('annotate.sending') : t('annotate.sendAll'))
         : null,
       h('span', { className: 'mmd-editor-spacer', key: 'spacer' }),
       h(ZoomControls, { key: 'zoom', zoom, onZoom: setZoom, t }),
     ]),
+    notice === null
+      ? null
+      : h('p', { className: 'mmd-anno-notice', key: 'notice' }, notice),
     h('div', { className: 'mmd-img-scroll', key: 'stage' }, [
       h('div', {
         key: 'canvas',
@@ -3153,34 +4715,57 @@ function ImageAnnotateBody(props) {
       ]),
       regions.length > 0
         ? h('div', { className: 'mmd-anno-list', key: 'list' }, regions.map((item, index) =>
-            h('div', { className: 'mmd-anno-item', key: `a:${index}` }, [
-              h('span', { className: 'mmd-anno-badge', key: 'n' }, String(index + 1)),
-              h('span', { className: 'mmd-anno-text', key: 'text' }, item.comment),
-              h('button', {
-                type: 'button', key: 'del', className: 'mmd-anno-del', 'aria-label': '删除',
-                onClick: () => removeRegion(index),
-              }, '×'),
-            ]),
+            h(AnnotationItem, {
+              key: `a:${index}`,
+              item,
+              index,
+              title: '',
+              text: item.comment,
+              t,
+              onEdit: startEdit,
+              onRemove: removeRegion,
+            }),
           ))
         : null,
     ]),
-    pending === null
-      ? null
-      : h(InstructionPopover, {
-          key: 'region-pop',
-          anchor: { top: pending.top, left: pending.left },
-          title: t('annotate.pickTitle'),
+    editIndex !== null
+      ? h(InstructionPopover, {
+          key: 'region-edit-pop',
+          anchor: regions[editIndex]?.anchor ?? { top: 80, left: 80 },
+          title: `${t('annotate.editHeading')}：${regionArea(t, regions[editIndex])}`,
           placeholder: t('annotate.placeholder'),
-          value: comment,
-          onChange: setComment,
-          onSubmit: confirmRegion,
-          onClose: () => setPending(null),
+          value: editValue,
+          onChange: setEditValue,
+          onSubmit: confirmEdit,
+          onClose: cancelEdit,
+          attachments: editFiles,
+          onAttach: (files) => setEditFiles((prev) => [...prev, ...createAttachments(files)]),
+          onDetach: detachEditFile,
+          submitLabel: t('annotate.save'),
+          assist: assistOptions(regions[editIndex], editValue),
           t,
-        }),
+        })
+      : pending === null
+        ? null
+        : h(InstructionPopover, {
+            key: 'region-pop',
+            anchor: { top: pending.top, left: pending.left },
+            title: t('annotate.pickTitle'),
+            placeholder: t('annotate.placeholder'),
+            value: comment,
+            onChange: setComment,
+            onSubmit: confirmRegion,
+            onClose: () => { revokeAttachments(pendingFiles); setPendingFiles([]); setPending(null); },
+            attachments: pendingFiles,
+            onAttach: (files) => setPendingFiles((prev) => [...prev, ...createAttachments(files)]),
+            onDetach: (id) => setPendingFiles((prev) => dropAttachment(prev, id)),
+            assist: assistOptions(pending.region, comment),
+            t,
+          }),
   ]);
 }
 
-export const inject = ['slots', 'locale', 'documentPreviews', 'sidebarRight', 'sidebarRightTabs', 'sessions', 'remote', 'remote.workspaceFiles', 'remote.session', 'remote.permissionPresets', 'remote.fileReferences'];
+export const inject = ['slots', 'locale', 'documentPreviews', 'sidebarRight', 'sidebarRightTabs', 'sessions', 'remote', 'remote.commands', 'remote.workspaceFiles', 'remote.session', 'remote.permissionPresets', 'remote.fileReferences', 'remote.fileUploads'];
 
 export function apply(ctx) {
   const t = ctx.locale.bind(NS);

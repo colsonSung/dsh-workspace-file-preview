@@ -1,10 +1,16 @@
 /**
  * Host half of the local preview bundle: authenticated file commands for the
- * Markdown editor and the file-tree context menu, plus session-title commands.
+ * Markdown editor and the file-tree context menu, plus session-title commands,
+ * plus the annotation draft route the preview's AI assist button calls, plus
+ * the side chat question route.
  */
 import { copyFile, mkdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { isAbsolutePath, pathSegments } from './paths.js';
+import { answerQuestion, draftAnnotation, serviceOf } from './host-ai.js';
 export const inject = ['commands', 'fs', 'sessionTitle'];
+
+/** The route the client half posts its annotation drafts to. */
+export const ROUTE = '/api/markdown-mermaid-preview';
 
 export function apply(ctx) {
   ctx.effect(
@@ -111,4 +117,66 @@ export function apply(ctx) {
       }),
     'file-tree: fs command',
   );
+
+  // The preview's AI assist button asks the Host for one draft of the
+  // annotation. The Host owns the model, so the route runs here: the page
+  // never holds a key and never talks to a provider itself.
+  ctx.inject(['connection'], (connectionCtx) => {
+    connectionCtx.effect(() => {
+      try {
+        return connectionCtx.connection.fetch.register({
+          path: ROUTE,
+          methods: ['POST'],
+          requestBody: 'buffered',
+          fetch: async (request) => {
+            let body;
+            try {
+              body = await request.json();
+            } catch {
+              return Response.json(failure('mmd-annotate/bad-request', 'body is not JSON'), { status: 400 });
+            }
+            const method = typeof body?.method === 'string' ? body.method : '';
+            if (method !== 'annotate-draft' && method !== 'ask') {
+              return Response.json(failure('mmd-annotate/unknown-method', `unsupported method: ${method}`), { status: 400 });
+            }
+            try {
+              // The model services are read per request: the Host may mount
+              // or replace them long after this plugin was applied.
+              const deps = {
+                get llm() {
+                  return serviceOf(ctx, 'llm');
+                },
+                get agentDefaultModel() {
+                  return serviceOf(ctx, 'agentDefaultModel');
+                },
+              };
+              const result = method === 'ask'
+                ? await answerQuestion(body?.payload ?? {}, deps)
+                : await draftAnnotation(body?.payload ?? {}, deps);
+              return Response.json({ ok: true, result });
+            } catch (error) {
+              return Response.json(
+                failure('mmd-annotate/failed', error instanceof Error ? error.message : String(error)),
+                { status: 200 },
+              );
+            }
+          },
+        });
+      } catch (error) {
+        // A reload can apply this plugin twice; the route already exists then.
+        console.warn('[markdown-mermaid-preview] route registration failed: ' + String(error));
+        return () => {};
+      }
+    }, 'markdown-mermaid-preview: ' + ROUTE);
+  });
+}
+
+/**
+ * Build the error body the client half understands.
+ * @param {string} code - the machine readable code.
+ * @param {string} message - the Chinese message for the reviewer.
+ * @returns {object} the error body.
+ */
+function failure(code, message) {
+  return { ok: false, error: { code, message, details: {} } };
 }

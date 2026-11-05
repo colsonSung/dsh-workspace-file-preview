@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-	id: "dsh-markdown-mermaid-preview",
+	id: "@local/markdown-mermaid-preview",
 	chunk: "client.editor.js",
 	factory: (require) => {
 		var module = { exports: {} };
