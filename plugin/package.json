@@ -1,18 +1,18 @@
 {
-  "name": "dsh-markdown-mermaid-preview",
+  "name": "dsh-workspace-file-preview",
   "version": "1.2.0",
   "private": true,
   "type": "module",
-  "description": "Preview and edit workspace Markdown, Mermaid, HTML/SVG and image files inside the DeepSeek Harness web UI.",
+  "description": "Preview and edit workspace files inside the DeepSeek Harness web UI: Markdown and Mermaid rendering, HTML and image annotation, and in-panel video playback.",
   "license": "MIT",
   "author": "Ethan Song",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/colsonSung/dsh-markdown-mermaid-preview.git"
+    "url": "git+https://github.com/colsonSung/dsh-workspace-file-preview.git"
   },
-  "homepage": "https://github.com/colsonSung/dsh-markdown-mermaid-preview#readme",
+  "homepage": "https://github.com/colsonSung/dsh-workspace-file-preview#readme",
   "bugs": {
-    "url": "https://github.com/colsonSung/dsh-markdown-mermaid-preview/issues"
+    "url": "https://github.com/colsonSung/dsh-workspace-file-preview/issues"
   },
   "keywords": [
     "deepseek-harness",
@@ -22,7 +22,8 @@
     "mermaid",
     "preview",
     "viewer",
-    "document-preview"
+    "document-preview",
+    "video"
   ],
   "exports": {
     ".": "./index.js",
@@ -42,7 +43,8 @@
     "icon.svg"
   ],
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "test": "node --test test/*.test.mjs"
   },
   "dsh": {
     "bundle": {

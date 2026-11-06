@@ -90,7 +90,7 @@ export function createAttachments(files) {
   return Array.from(files ?? []).map((file) => {
     attachmentSeq += 1;
     return {
-      id: `mmd-att-${attachmentSeq}`,
+      id: `wfp-att-${attachmentSeq}`,
       file,
       url: typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : '',
     };

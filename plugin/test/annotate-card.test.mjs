@@ -52,11 +52,11 @@ const render = async (props) => {
     }));
   });
   return {
-    badge: () => document.querySelector('.mmd-anno-badge'),
-    text: () => document.querySelector('.mmd-anno-text'),
-    edit: () => document.querySelector('.mmd-anno-edit'),
-    remove: () => document.querySelector('.mmd-anno-del'),
-    files: () => document.querySelector('.mmd-anno-files'),
+    badge: () => document.querySelector('.wfp-anno-badge'),
+    text: () => document.querySelector('.wfp-anno-text'),
+    edit: () => document.querySelector('.wfp-anno-edit'),
+    remove: () => document.querySelector('.wfp-anno-del'),
+    files: () => document.querySelector('.wfp-anno-files'),
   };
 };
 

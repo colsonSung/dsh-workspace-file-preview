@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Install the DeepSeek Harness "Markdown & Mermaid Preview" plugin into a profile.
+# Install the DeepSeek Harness "Workspace File Preview" plugin into a profile.
 #
 #   ./install.sh            # the profile the running Harness uses
 #   ./install.sh web        # a named profile
@@ -12,8 +12,8 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-PACKAGE="dsh-markdown-mermaid-preview"
-ROW_ID="markdown-mermaid-preview"
+PACKAGE="dsh-workspace-file-preview"
+ROW_ID="workspace-file-preview"
 
 PROFILE="${1:-${DSH_PROFILE:-}}"
 if [ -z "$PROFILE" ]; then

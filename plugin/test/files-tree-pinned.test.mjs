@@ -36,7 +36,9 @@ const { FilesTreeBody } = await import('../src/client-entry.js');
 const ROOT = '/workspace/demo';
 const PINNED_DIR = ROOT + '/docs';
 const PINNED_FILE = ROOT + '/readme.md';
-const STORAGE_KEY = `mmd-pinned::${ROOT}`;
+const STORAGE_KEY = `wfp-pinned::${ROOT}`;
+/** The key the plugin wrote its pins under before it was renamed. */
+const LEGACY_STORAGE_KEY = `mmd-pinned::${ROOT}`;
 
 /** The tree's own host calls, stubbed so the test never touches the disk. */
 const makeCtx = () => ({
@@ -66,9 +68,14 @@ const root = createRoot(container);
 /** Every render mounts a fresh tree: the pinned list lives in component state. */
 let mounts = 0;
 
-/** Render the tree with the given pins and wait for the first level. */
-const render = async (pinned) => {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(pinned));
+/**
+ * Render the tree with the given pins and wait for the first level.
+ *
+ * `seed: false` leaves the storage alone, so a test can put something else
+ * there — the key the plugin used before it was renamed, for instance.
+ */
+const render = async (pinned, options = {}) => {
+  if (options.seed !== false) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(pinned));
   await act(async () => {
     root.render(h(FilesTreeBody, {
       key: `tree-${mounts++}`,
@@ -98,11 +105,11 @@ const rightClick = async (element) => {
 
 /** The labels of the open context menu, in the order they are shown. */
 const menuLabels = () =>
-  [...document.querySelectorAll('.mmd-ctx-menu .mmd-ctx-item')].map((item) => item.textContent);
+  [...document.querySelectorAll('.wfp-ctx-menu .wfp-ctx-item')].map((item) => item.textContent);
 
 /** Click one entry of the open context menu. */
 const clickMenuItem = async (label) => {
-  const item = [...document.querySelectorAll('.mmd-ctx-menu .mmd-ctx-item')]
+  const item = [...document.querySelectorAll('.wfp-ctx-menu .wfp-ctx-item')]
     .find((entry) => entry.textContent === label);
   assert.ok(item, `the context menu offers "${label}"`);
   await act(async () => {
@@ -112,7 +119,7 @@ const clickMenuItem = async (label) => {
 
 test('right-clicking a pinned row opens a menu that leads with unpin', async () => {
   await render([{ path: PINNED_DIR, isDir: true }]);
-  const row = document.querySelector('.mmd-tree-pinned-row');
+  const row = document.querySelector('.wfp-tree-pinned-row');
   assert.ok(row, 'the pinned row is rendered');
 
   await rightClick(row);
@@ -124,7 +131,7 @@ test('right-clicking a pinned row opens a menu that leads with unpin', async () 
 
 test('right-clicking a pinned row acts on the pinned path, not on the workspace root', async () => {
   await render([{ path: PINNED_FILE, isDir: false }]);
-  const row = document.querySelector('.mmd-tree-pinned-row');
+  const row = document.querySelector('.wfp-tree-pinned-row');
   assert.ok(row, 'the pinned row is rendered');
 
   await rightClick(row);
@@ -139,13 +146,13 @@ test('right-clicking a pinned row acts on the pinned path, not on the workspace 
 
 test('running unpin takes the row out of the list and out of storage', async () => {
   await render([{ path: PINNED_DIR, isDir: true }, { path: PINNED_FILE, isDir: false }]);
-  assert.equal(document.querySelectorAll('.mmd-tree-pinned-row').length, 2);
+  assert.equal(document.querySelectorAll('.wfp-tree-pinned-row').length, 2);
 
-  const rows = [...document.querySelectorAll('.mmd-tree-pinned-row')];
+  const rows = [...document.querySelectorAll('.wfp-tree-pinned-row')];
   await rightClick(rows[0]);
   await clickMenuItem('tree.unpin');
 
-  const left = [...document.querySelectorAll('.mmd-tree-pinned-row')];
+  const left = [...document.querySelectorAll('.wfp-tree-pinned-row')];
   assert.equal(left.length, 1, 'one pinned row is gone');
   assert.ok(!left[0].textContent.includes('docs'), 'the un-pinned row is the other one');
   assert.deepEqual(
@@ -157,14 +164,14 @@ test('running unpin takes the row out of the list and out of storage', async () 
 
 test('unpin is explicit: running it twice does not pin the row back', async () => {
   await render([{ path: PINNED_DIR, isDir: true }]);
-  const row = document.querySelector('.mmd-tree-pinned-row');
+  const row = document.querySelector('.wfp-tree-pinned-row');
   await rightClick(row);
   await clickMenuItem('tree.unpin');
-  assert.equal(document.querySelectorAll('.mmd-tree-pinned-row').length, 0);
+  assert.equal(document.querySelectorAll('.wfp-tree-pinned-row').length, 0);
 
   // The tree row for the same path is no longer pinned, so its menu offers
   // to pin it again instead of unpinning a row that is already gone.
-  const treeRow = document.querySelector(`.mmd-locate-row[data-path="${PINNED_DIR}"]`);
+  const treeRow = document.querySelector(`.wfp-locate-row[data-path="${PINNED_DIR}"]`);
   assert.ok(treeRow, 'the tree row is rendered');
   await rightClick(treeRow);
   const labels = menuLabels();
@@ -174,7 +181,7 @@ test('unpin is explicit: running it twice does not pin the row back', async () =
 
 test('right-clicking a tree row that is not pinned offers pin', async () => {
   await render([{ path: PINNED_DIR, isDir: true }]);
-  const treeRow = document.querySelector(`.mmd-locate-row[data-path="${PINNED_FILE}"]`);
+  const treeRow = document.querySelector(`.wfp-locate-row[data-path="${PINNED_FILE}"]`);
   assert.ok(treeRow, 'the tree row is rendered');
 
   await rightClick(treeRow);
@@ -186,7 +193,7 @@ test('right-clicking a tree row that is not pinned offers pin', async () => {
 
 test('right-clicking the empty space of the tree still opens the workspace-root menu', async () => {
   await render([{ path: PINNED_DIR, isDir: true }]);
-  const tree = document.querySelector('.mmd-locate-tree');
+  const tree = document.querySelector('.wfp-locate-tree');
   assert.ok(tree, 'the tree is rendered');
 
   await rightClick(tree);
@@ -195,4 +202,17 @@ test('right-clicking the empty space of the tree still opens the workspace-root 
   assert.ok(labels.includes('tree.newFile'), 'the root menu creates files in the root');
   assert.ok(labels.includes('tree.pin'), 'the root itself can be pinned');
   assert.ok(!labels.includes('tree.unpin'), 'the root is not pinned');
+});
+
+test('the pins written under the pre-rename key are still there', async () => {
+  window.localStorage.removeItem(STORAGE_KEY);
+  window.localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify([{ path: PINNED_FILE, isDir: false }]));
+  try {
+    await render([], { seed: false });
+    const row = document.querySelector('.wfp-tree-pinned-row');
+    assert.ok(row, 'the pinned row from the old key is rendered');
+    assert.match(row.textContent, /readme/);
+  } finally {
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+  }
 });

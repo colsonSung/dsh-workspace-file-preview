@@ -1,9 +1,9 @@
 /**
  * Guard tests for the host half's absolute-path handling.
  *
- * The `mmd-fs` command validates its path before it dispatches on the
+ * The `wfp-fs` command validates its path before it dispatches on the
  * operation, so an unknown operation exercises the guard without touching the
- * filesystem. `mmd-save` writes through `ctx.fs`, which the double below
+ * filesystem. `wfp-save` writes through `ctx.fs`, which the double below
  * stubs out.
  *
  * Run with `node --test test/`.
@@ -67,48 +67,48 @@ const run = async (name, payload) => {
 /** An operation the command does not know, so the guard is the only thing that can fail. */
 const NOOP = 'noop';
 
-test('mmd-save accepts the path spellings the Harness reports', async () => {
+test('wfp-save accepts the path spellings the Harness reports', async () => {
   for (const path of [
     '/home/user/note.md',
     'D:\\workspace\\note.md',
     'D:\\workspace\\docs\\note.md',
     '\\\\server\\share\\note.md',
   ]) {
-    const result = await run('mmd-save', { path, content: '# hi' });
+    const result = await run('wfp-save', { path, content: '# hi' });
     assert.equal(result.kind, 'success', `${path} should be accepted`);
   }
 });
 
-test('mmd-save refuses a relative path and a traversal', async () => {
-  const relative = await run('mmd-save', { path: 'note.md', content: '# hi' });
+test('wfp-save refuses a relative path and a traversal', async () => {
+  const relative = await run('wfp-save', { path: 'note.md', content: '# hi' });
   assert.equal(relative.kind, 'error');
   assert.match(relative.text, /absolute path required/);
 
-  const traversal = await run('mmd-save', { path: 'D:\\workspace\\a\\..\\b.md', content: '# hi' });
+  const traversal = await run('wfp-save', { path: 'D:\\workspace\\a\\..\\b.md', content: '# hi' });
   assert.equal(traversal.kind, 'error');
   assert.match(traversal.text, /path traversal refused/);
 });
 
-test('mmd-fs accepts every absolute spelling', async () => {
+test('wfp-fs accepts every absolute spelling', async () => {
   for (const path of [
     '/home/user/dir',
     'D:\\workspace\\dir',
     'D:\\workspace\\docs\\dir',
     '\\\\server\\share\\dir',
   ]) {
-    const result = await run('mmd-fs', { op: NOOP, path });
+    const result = await run('wfp-fs', { op: NOOP, path });
     assert.match(result.text, /unknown op/, `${path} should reach the operation dispatch`);
   }
 });
 
-test('mmd-fs refuses a relative path, a traversal and a drive root', async () => {
-  const relative = await run('mmd-fs', { op: NOOP, path: 'dir' });
+test('wfp-fs refuses a relative path, a traversal and a drive root', async () => {
+  const relative = await run('wfp-fs', { op: NOOP, path: 'dir' });
   assert.match(relative.text, /absolute path required/);
 
-  const traversal = await run('mmd-fs', { op: NOOP, path: 'D:\\workspace\\a\\..\\b' });
+  const traversal = await run('wfp-fs', { op: NOOP, path: 'D:\\workspace\\a\\..\\b' });
   assert.match(traversal.text, /path traversal refused/);
 
-  const driveRoot = await run('mmd-fs', { op: NOOP, path: 'D:\\' });
+  const driveRoot = await run('wfp-fs', { op: NOOP, path: 'D:\\' });
   assert.match(driveRoot.text, /path too shallow/);
 });
 
@@ -130,7 +130,7 @@ test('the annotation draft route refuses a method it does not know', async () =>
   const { status, body } = await post({ method: 'something-else' });
   assert.equal(status, 400);
   assert.equal(body.ok, false);
-  assert.equal(body.error.code, 'mmd-annotate/unknown-method');
+  assert.equal(body.error.code, 'wfp-annotate/unknown-method');
 });
 
 test('the annotation draft route answers with a readable error when no model is mounted', async () => {
@@ -140,6 +140,6 @@ test('the annotation draft route answers with a readable error when no model is 
   });
   assert.equal(status, 200);
   assert.equal(body.ok, false);
-  assert.equal(body.error.code, 'mmd-annotate/failed');
+  assert.equal(body.error.code, 'wfp-annotate/failed');
   assert.match(body.error.message, /未配置可用模型/);
 });

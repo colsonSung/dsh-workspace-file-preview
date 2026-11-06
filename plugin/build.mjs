@@ -1,10 +1,21 @@
-import { rename, writeFile } from 'node:fs/promises';
+import { readFile, rename, writeFile } from 'node:fs/promises';
 import { build } from 'esbuild';
+
+/**
+ * The package name is the bundle's module id.
+ *
+ * The Harness client loader keys its factory table by the package name, so a
+ * bundle whose id drifts from the manifest loads "without registering". The
+ * published form of this plugin drops the `@local/` prefix, so the id is read
+ * from package.json instead of being written here: the local shape and the
+ * published shape then cannot drift apart.
+ */
+const { name: PACKAGE_NAME } = JSON.parse(await readFile(new URL('package.json', import.meta.url), 'utf8'));
 
 const wrap = (chunk) => ({
   banner: {
     js: `window.__ModuleLoader__.load({
-	id: "@local/markdown-mermaid-preview",
+	id: "${PACKAGE_NAME}",
 ${chunk ? `\tchunk: "${chunk}",\n` : ''}	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;`,

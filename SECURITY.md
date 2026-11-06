@@ -9,8 +9,8 @@ one line it adds to your profile's patch file.
 
 | What | Where it lives | How to change it |
 | --- | --- | --- |
-| plugin bundle row | `<profile>/cordis.patch.yml` | remove the `markdown-mermaid-preview` entry |
-| pinned files | the browser's `localStorage`, key `mmd-pinned::<workspace>` | clear the site data, or unpin the file |
+| plugin bundle row | `<profile>/cordis.patch.yml` | remove the `workspace-file-preview` entry |
+| pinned files | the browser's `localStorage`, key `wfp-pinned::<workspace>` | clear the site data, or unpin the file |
 
 There is no token to rotate, because no token is issued.
 
@@ -30,8 +30,8 @@ There is no token to rotate, because no token is issued.
 
 ## What it does not do
 
-* No outbound network calls. Markdown, Mermaid and the annotation UI are
-  rendered locally in the browser.
+* No outbound network calls. Markdown, Mermaid, video playback and the
+  annotation UI are rendered locally in the browser.
 * No telemetry, no analytics, no crash reporting.
 * No reading of `~/.dsh/credentials.yaml` or any other credential store.
 * No background processes, no scheduled tasks, no daemons.

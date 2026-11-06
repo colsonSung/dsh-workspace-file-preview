@@ -42,9 +42,9 @@ const fileOf = (name, type) => new dom.window.File(['bytes'], name, { type });
 const render = async (props) => {
   await act(async () => { root.render(h(InstructionPopover, props)); });
   return {
-    attach: () => document.querySelector('.mmd-pop-attach'),
-    chips: () => [...document.querySelectorAll('.mmd-pop-file')],
-    textarea: () => document.querySelector('.mmd-pop-text'),
+    attach: () => document.querySelector('.wfp-pop-attach'),
+    chips: () => [...document.querySelectorAll('.wfp-pop-file')],
+    textarea: () => document.querySelector('.wfp-pop-text'),
     fileInput: () => document.querySelector('input[type="file"]'),
   };
 };
@@ -141,7 +141,7 @@ test('a pasted screenshot lands in the attachment list', async () => {
 
 test('the chips render the file name and remove themselves on demand', async () => {
   const detached = [];
-  const attachment = { id: 'mmd-att-1', file: fileOf('shot.png', 'image/png'), url: '' };
+  const attachment = { id: 'wfp-att-1', file: fileOf('shot.png', 'image/png'), url: '' };
   const view = await render({
     anchor: { top: 10, left: 10 },
     title: '标注',
@@ -160,6 +160,6 @@ test('the chips render the file name and remove themselves on demand', async () 
   assert.match(view.chips()[0].textContent, /shot\.png/);
 
   await act(async () => { view.chips()[0].querySelector('button').dispatchEvent(new dom.window.Event('click', { bubbles: true })); });
-  assert.deepEqual(detached, ['mmd-att-1']);
+  assert.deepEqual(detached, ['wfp-att-1']);
   await unmount();
 });

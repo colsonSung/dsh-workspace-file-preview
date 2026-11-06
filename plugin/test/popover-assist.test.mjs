@@ -58,15 +58,15 @@ function Harness(props) {
 const render = async (props) => {
   await act(async () => { root.render(h(Harness, props)); });
   return {
-    toggle: () => document.querySelector('.mmd-pop-assist-toggle'),
-    panel: () => document.querySelector('.mmd-pop-assist'),
-    chips: () => [...document.querySelectorAll('.mmd-pop-chip')],
-    note: () => document.querySelector('.mmd-pop-note'),
-    generate: () => document.querySelector('.mmd-pop-assist-btn'),
-    template: () => document.querySelector('.mmd-pop-assist-tpl'),
-    textarea: () => document.querySelector('.mmd-pop-text'),
-    error: () => document.querySelector('.mmd-pop-error'),
-    hint: () => document.querySelector('.mmd-pop-assist-hint'),
+    toggle: () => document.querySelector('.wfp-pop-assist-toggle'),
+    panel: () => document.querySelector('.wfp-pop-assist'),
+    chips: () => [...document.querySelectorAll('.wfp-pop-chip')],
+    note: () => document.querySelector('.wfp-pop-note'),
+    generate: () => document.querySelector('.wfp-pop-assist-btn'),
+    template: () => document.querySelector('.wfp-pop-assist-tpl'),
+    textarea: () => document.querySelector('.wfp-pop-text'),
+    error: () => document.querySelector('.wfp-pop-error'),
+    hint: () => document.querySelector('.wfp-pop-assist-hint'),
   };
 };
 

@@ -71,17 +71,17 @@ const click = async (element) => {
 
 test('the selection bar offers the two actions and nothing else', async () => {
   await render(h(SelectionActions, { anchor: { top: 100, left: 200 }, onAdd: () => {}, onAsk: () => {}, t }));
-  const buttons = [...document.querySelectorAll('.mmd-sel-btn')];
+  const buttons = [...document.querySelectorAll('.wfp-sel-btn')];
   assert.equal(buttons.length, 2);
   assert.equal(buttons[0].textContent, 'chat.addSelection');
   assert.equal(buttons[1].textContent, 'chat.askSide');
-  assert.ok(document.querySelector('.mmd-sel-sep'), 'the two actions are separated');
+  assert.ok(document.querySelector('.wfp-sel-sep'), 'the two actions are separated');
   await unmount();
 });
 
 test('the selection bar sits above the selection', async () => {
   await render(h(SelectionActions, { anchor: { top: 100, left: 200 }, onAdd: () => {}, onAsk: () => {}, t }));
-  const bar = document.querySelector('.mmd-sel-actions');
+  const bar = document.querySelector('.wfp-sel-actions');
   assert.equal(bar.style.top, '100px');
   assert.equal(bar.style.left, '200px');
   await unmount();
@@ -117,14 +117,14 @@ test('the side chat asks the Host and shows the answer', async () => {
   };
   await render(h(SideChat, { path: 'docs/PRD.md', selection: 'the passage', onClose: () => {}, ask, t }));
 
-  await type(document.querySelector('.mmd-side-chat-text'), 'why did it fail?');
-  await click(document.querySelector('.mmd-side-chat-send'));
+  await type(document.querySelector('.wfp-side-chat-text'), 'why did it fail?');
+  await click(document.querySelector('.wfp-side-chat-send'));
 
   assert.equal(asked.length, 1);
   assert.equal(asked[0].question, 'why did it fail?');
   assert.equal(asked[0].selection, 'the passage');
   assert.equal(asked[0].path, 'docs/PRD.md');
-  const turns = [...document.querySelectorAll('.mmd-side-chat-turn')];
+  const turns = [...document.querySelectorAll('.wfp-side-chat-turn')];
   assert.equal(turns.length, 2);
   assert.equal(turns[0].textContent, 'why did it fail?');
   assert.equal(turns[1].textContent, 'the answer');
@@ -139,10 +139,10 @@ test('the second question carries the first one', async () => {
   };
   await render(h(SideChat, { path: 'a.md', selection: '', onClose: () => {}, ask, t }));
 
-  await type(document.querySelector('.mmd-side-chat-text'), 'first');
-  await click(document.querySelector('.mmd-side-chat-send'));
-  await type(document.querySelector('.mmd-side-chat-text'), 'second');
-  await click(document.querySelector('.mmd-side-chat-send'));
+  await type(document.querySelector('.wfp-side-chat-text'), 'first');
+  await click(document.querySelector('.wfp-side-chat-send'));
+  await type(document.querySelector('.wfp-side-chat-text'), 'second');
+  await click(document.querySelector('.wfp-side-chat-send'));
 
   assert.equal(asked.length, 2);
   assert.deepEqual(asked[1].history, [
@@ -156,12 +156,12 @@ test('a refused question says so and keeps the panel open', async () => {
   const ask = async () => { throw new Error('宿主未配置可用模型，AI 辅助不可用'); };
   await render(h(SideChat, { path: 'a.md', selection: '', onClose: () => {}, ask, t }));
 
-  await type(document.querySelector('.mmd-side-chat-text'), 'why');
-  await click(document.querySelector('.mmd-side-chat-send'));
+  await type(document.querySelector('.wfp-side-chat-text'), 'why');
+  await click(document.querySelector('.wfp-side-chat-send'));
 
-  const error = document.querySelector('.mmd-side-chat-error');
+  const error = document.querySelector('.wfp-side-chat-error');
   assert.match(error.textContent, /宿主未配置可用模型/);
-  assert.ok(document.querySelector('.mmd-side-chat'), 'the panel is still there');
+  assert.ok(document.querySelector('.wfp-side-chat'), 'the panel is still there');
   await unmount();
 });
 
@@ -170,7 +170,7 @@ test('an empty question is never asked', async () => {
   const ask = async () => { asked += 1; return 'answer'; };
   await render(h(SideChat, { path: 'a.md', selection: '', onClose: () => {}, ask, t }));
 
-  await click(document.querySelector('.mmd-side-chat-send'));
+  await click(document.querySelector('.wfp-side-chat-send'));
   assert.equal(asked, 0);
   await unmount();
 });

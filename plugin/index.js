@@ -10,13 +10,13 @@ import { answerQuestion, draftAnnotation, serviceOf } from './host-ai.js';
 export const inject = ['commands', 'fs', 'sessionTitle'];
 
 /** The route the client half posts its annotation drafts to. */
-export const ROUTE = '/api/markdown-mermaid-preview';
+export const ROUTE = '/api/workspace-file-preview';
 
 export function apply(ctx) {
   ctx.effect(
     () =>
       ctx.commands.register({
-        name: 'mmd-save',
+        name: 'wfp-save',
         description: 'Write edited content back to a workspace file from the preview editor',
         input: { hint: '<json>' },
         recordInput: false,
@@ -25,18 +25,18 @@ export function apply(ctx) {
             const payload = JSON.parse(rawInput);
             const target = payload?.path;
             const content = payload?.content;
-            if (typeof target !== 'string' || target.length === 0) return { kind: 'error', text: 'mmd-save: missing path' };
-            if (typeof content !== 'string') return { kind: 'error', text: 'mmd-save: missing content' };
-            if (!isAbsolutePath(target)) return { kind: 'error', text: 'mmd-save: absolute path required' };
-            if (target.includes('..')) return { kind: 'error', text: 'mmd-save: path traversal refused' };
-            if (content.length > 4 * 1024 * 1024) return { kind: 'error', text: 'mmd-save: content too large' };
+            if (typeof target !== 'string' || target.length === 0) return { kind: 'error', text: 'wfp-save: missing path' };
+            if (typeof content !== 'string') return { kind: 'error', text: 'wfp-save: missing content' };
+            if (!isAbsolutePath(target)) return { kind: 'error', text: 'wfp-save: absolute path required' };
+            if (target.includes('..')) return { kind: 'error', text: 'wfp-save: path traversal refused' };
+            if (content.length > 4 * 1024 * 1024) return { kind: 'error', text: 'wfp-save: content too large' };
             const info = await ctx.fs.lstat(target);
-            if (info === undefined || info.type !== 'file') return { kind: 'error', text: 'mmd-save: not a regular file' };
+            if (info === undefined || info.type !== 'file') return { kind: 'error', text: 'wfp-save: not a regular file' };
             const file = await ctx.fs.resolve(target);
             await ctx.fs.writeText(file, content);
             return { kind: 'success', text: 'saved' };
           } catch (error) {
-            return { kind: 'error', text: 'mmd-save: ' + (error instanceof Error ? error.message : String(error)) };
+            return { kind: 'error', text: 'wfp-save: ' + (error instanceof Error ? error.message : String(error)) };
           }
         },
       }),
@@ -87,7 +87,7 @@ export function apply(ctx) {
   ctx.effect(
     () =>
       ctx.commands.register({
-        name: 'mmd-fs',
+        name: 'wfp-fs',
         description: 'File operations from the file-tree context menu',
         input: { hint: '<json>' },
         recordInput: false,
@@ -108,10 +108,10 @@ export function apply(ctx) {
             else if (op === 'rename' || op === 'move') await rename(path, guard(payload?.target));
             else if (op === 'copy') await copyFile(path, guard(payload?.target));
             else if (op === 'delete') await unlink(path);
-            else return { kind: 'error', text: 'mmd-fs: unknown op ' + String(op) };
+            else return { kind: 'error', text: 'wfp-fs: unknown op ' + String(op) };
             return { kind: 'success', text: op };
           } catch (error) {
-            return { kind: 'error', text: 'mmd-fs: ' + (error instanceof Error ? error.message : String(error)) };
+            return { kind: 'error', text: 'wfp-fs: ' + (error instanceof Error ? error.message : String(error)) };
           }
         },
       }),
@@ -133,11 +133,11 @@ export function apply(ctx) {
             try {
               body = await request.json();
             } catch {
-              return Response.json(failure('mmd-annotate/bad-request', 'body is not JSON'), { status: 400 });
+              return Response.json(failure('wfp-annotate/bad-request', 'body is not JSON'), { status: 400 });
             }
             const method = typeof body?.method === 'string' ? body.method : '';
             if (method !== 'annotate-draft' && method !== 'ask') {
-              return Response.json(failure('mmd-annotate/unknown-method', `unsupported method: ${method}`), { status: 400 });
+              return Response.json(failure('wfp-annotate/unknown-method', `unsupported method: ${method}`), { status: 400 });
             }
             try {
               // The model services are read per request: the Host may mount
@@ -156,7 +156,7 @@ export function apply(ctx) {
               return Response.json({ ok: true, result });
             } catch (error) {
               return Response.json(
-                failure('mmd-annotate/failed', error instanceof Error ? error.message : String(error)),
+                failure('wfp-annotate/failed', error instanceof Error ? error.message : String(error)),
                 { status: 200 },
               );
             }
@@ -164,10 +164,10 @@ export function apply(ctx) {
         });
       } catch (error) {
         // A reload can apply this plugin twice; the route already exists then.
-        console.warn('[markdown-mermaid-preview] route registration failed: ' + String(error));
+        console.warn('[workspace-file-preview] route registration failed: ' + String(error));
         return () => {};
       }
-    }, 'markdown-mermaid-preview: ' + ROUTE);
+    }, 'workspace-file-preview: ' + ROUTE);
   });
 }
 

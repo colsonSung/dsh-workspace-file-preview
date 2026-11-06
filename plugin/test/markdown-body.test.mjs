@@ -41,7 +41,7 @@ if (typeof dom.window.Range.prototype.getBoundingClientRect !== 'function') {
 const { createElement: h } = await import('react');
 const { createRoot } = await import('react-dom/client');
 const { act } = await import('react-dom/test-utils');
-const { MarkdownMermaidBody } = await import('../src/client-entry.js');
+const { MarkdownBody } = await import('../src/client-entry.js');
 
 const root = createRoot(document.body);
 
@@ -66,7 +66,7 @@ const props = {
 
 /** Mount the body. */
 const render = async () => {
-  await act(async () => { root.render(h(MarkdownMermaidBody, props)); });
+  await act(async () => { root.render(h(MarkdownBody, props)); });
 };
 
 /** Unmount it. */
@@ -77,8 +77,8 @@ const unmount = async () => {
 test('the preview renders the document and its review bar', async () => {
   await render();
   assert.ok(document.querySelector('[data-document-markdown-mermaid]'), 'the document body is there');
-  assert.ok(document.querySelector('.mmd-md-bar'), 'the review bar is there');
-  const toggle = document.querySelector('.mmd-md-bar .mmd-anno-toggle');
+  assert.ok(document.querySelector('.wfp-md-bar'), 'the review bar is there');
+  const toggle = document.querySelector('.wfp-md-bar .wfp-anno-toggle');
   assert.ok(toggle, 'the annotate toggle is there');
   assert.equal(toggle.textContent, 'mdAnnotate.toggle');
   await unmount();
@@ -86,30 +86,30 @@ test('the preview renders the document and its review bar', async () => {
 
 test('a document without annotations shows no count', async () => {
   await render();
-  assert.equal(document.querySelector('.mmd-anno-pill'), null);
+  assert.equal(document.querySelector('.wfp-anno-pill'), null);
   await unmount();
 });
 
 test('turning the annotate mode on marks the document for picking', async () => {
   await render();
-  const toggle = document.querySelector('.mmd-md-bar .mmd-anno-toggle');
+  const toggle = document.querySelector('.wfp-md-bar .wfp-anno-toggle');
   await act(async () => { toggle.dispatchEvent(new dom.window.Event('click', { bubbles: true })); });
-  assert.match(document.querySelector('.mmd-document').className, /mmd-picking/);
-  assert.equal(document.querySelector('.mmd-md-bar .mmd-anno-toggle').textContent, 'mdAnnotate.hint');
+  assert.match(document.querySelector('.wfp-document').className, /wfp-picking/);
+  assert.equal(document.querySelector('.wfp-md-bar .wfp-anno-toggle').textContent, 'mdAnnotate.hint');
   await unmount();
 });
 
 test('the side chat and the selection bar stay out of the way until they are asked for', async () => {
   await render();
-  assert.equal(document.querySelector('.mmd-side-chat'), null);
-  assert.equal(document.querySelector('.mmd-sel-actions'), null);
+  assert.equal(document.querySelector('.wfp-side-chat'), null);
+  assert.equal(document.querySelector('.wfp-sel-actions'), null);
   await unmount();
 });
 
 test('selecting text offers the two actions, and the side chat opens with the passage', async () => {
   await render();
   const body = document.querySelector('[data-document-markdown-mermaid]');
-  const paragraph = body.querySelector('.mmd-plain') ?? body.querySelector('p');
+  const paragraph = body.querySelector('.wfp-plain') ?? body.querySelector('p');
   const range = document.createRange();
   range.selectNodeContents(paragraph);
   const selection = document.getSelection();
@@ -117,13 +117,13 @@ test('selecting text offers the two actions, and the side chat opens with the pa
   selection.addRange(range);
   await act(async () => { document.dispatchEvent(new dom.window.Event('selectionchange')); });
 
-  const bar = document.querySelector('.mmd-sel-actions');
+  const bar = document.querySelector('.wfp-sel-actions');
   assert.ok(bar, 'the selection bar follows the selection');
-  const buttons = [...document.querySelectorAll('.mmd-sel-btn')];
+  const buttons = [...document.querySelectorAll('.wfp-sel-btn')];
   assert.equal(buttons.length, 2);
 
   await act(async () => { buttons[1].dispatchEvent(new dom.window.Event('click', { bubbles: true })); });
-  const chat = document.querySelector('.mmd-side-chat');
+  const chat = document.querySelector('.wfp-side-chat');
   assert.ok(chat, 'the side chat opens');
   assert.match(chat.textContent, /A paragraph to review/);
   await unmount();
@@ -132,7 +132,7 @@ test('selecting text offers the two actions, and the side chat opens with the pa
 test('a right click on a selection opens the chat actions', async () => {
   await render();
   const body = document.querySelector('[data-document-markdown-mermaid]');
-  const paragraph = body.querySelector('.mmd-plain');
+  const paragraph = body.querySelector('.wfp-plain');
   const range = document.createRange();
   range.selectNodeContents(paragraph);
   const selection = document.getSelection();
@@ -143,9 +143,9 @@ test('a right click on a selection opens the chat actions', async () => {
     paragraph.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, clientX: 120, clientY: 260 }));
   });
 
-  const menu = document.querySelector('.mmd-menu');
+  const menu = document.querySelector('.wfp-menu');
   assert.ok(menu, 'the menu opens');
-  const items = [...document.querySelectorAll('.mmd-menu-item')].map((item) => item.textContent);
+  const items = [...document.querySelectorAll('.wfp-menu-item')].map((item) => item.textContent);
   assert.deepEqual(items, ['chat.copy', 'chat.addSelection', 'chat.askSide', 'mdAnnotate.pickTitle']);
   await unmount();
 });
@@ -153,11 +153,11 @@ test('a right click on a selection opens the chat actions', async () => {
 test('a right click without a selection still offers the block', async () => {
   await render();
   const body = document.querySelector('[data-document-markdown-mermaid]');
-  const paragraph = body.querySelector('.mmd-plain');
+  const paragraph = body.querySelector('.wfp-plain');
   await act(async () => {
     paragraph.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, clientX: 120, clientY: 260 }));
   });
-  const items = [...document.querySelectorAll('.mmd-menu-item')].map((item) => item.textContent);
+  const items = [...document.querySelectorAll('.wfp-menu-item')].map((item) => item.textContent);
   assert.deepEqual(items, ['mdAnnotate.pickTitle']);
   await unmount();
 });
@@ -165,14 +165,14 @@ test('a right click without a selection still offers the block', async () => {
 test('the menu closes when the reader clicks elsewhere', async () => {
   await render();
   const body = document.querySelector('[data-document-markdown-mermaid]');
-  const paragraph = body.querySelector('.mmd-plain');
+  const paragraph = body.querySelector('.wfp-plain');
   await act(async () => {
     paragraph.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, clientX: 120, clientY: 260 }));
   });
-  assert.ok(document.querySelector('.mmd-menu'));
+  assert.ok(document.querySelector('.wfp-menu'));
   await act(async () => {
     document.body.dispatchEvent(new dom.window.Event('pointerdown', { bubbles: true }));
   });
-  assert.equal(document.querySelector('.mmd-menu'), null);
+  assert.equal(document.querySelector('.wfp-menu'), null);
   await unmount();
 });

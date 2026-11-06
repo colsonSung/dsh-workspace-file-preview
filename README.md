@@ -1,4 +1,4 @@
-# Markdown & Mermaid Preview for DeepSeek Harness
+# Workspace File Preview for DeepSeek Harness
 
 Read, render and edit the workspace files you are working on — inside the
 DeepSeek Harness web UI, without leaving the conversation.
@@ -6,9 +6,9 @@ DeepSeek Harness web UI, without leaving the conversation.
 Open a `.md` file and the right-hand sidebar renders it as GitHub-flavoured
 Markdown, with every ` ```mermaid ` block drawn as a real diagram. Open an
 `.html`, `.svg` or an image and you can point at the part that needs work and
-hand it to the agent as an annotation. There is also a workspace file tree
-with search and pinning, and an in-place Markdown editor that writes back to
-the file on disk.
+hand it to the agent as an annotation. Open a video and it plays in the same
+panel. There is also a workspace file tree with search and pinning, and an
+in-place Markdown editor that writes back to the file on disk.
 
 ```
 ┌ conversation ────────────────┬ document ───────────────────────────┐
@@ -31,14 +31,15 @@ the file on disk.
 | **Mermaid diagrams** | rendered as SVG, with zoom in / zoom out / fit-to-width controls |
 | **In-place editing** | edit the Markdown source in the sidebar and save it back to the file |
 | **AI annotation** | pick an element in an HTML/SVG page, or drag a box over an image, and send the selection to the agent |
+| **Video playback** | MP4, MOV, WebM, M4V, OGV, AVI and MKV play in the panel, with size, duration and resolution under the player |
 | **File tree** | browse the workspace, search it, pin what matters, rename / move / delete from a context menu |
 | **Straight to the agent** | "add to chat", "let the agent edit this", or comment on a selection — the file reference lands in the composer |
 
 ## Install
 
 ```bash
-git clone https://github.com/colsonSung/dsh-markdown-mermaid-preview.git
-cd dsh-markdown-mermaid-preview
+git clone https://github.com/colsonSung/dsh-workspace-file-preview.git
+cd dsh-workspace-file-preview
 ./install.sh              # installs into the profile of the running Harness
 ```
 
@@ -56,8 +57,8 @@ dsh plugin --profile web add ./plugin
 ```yaml
 # <profile>/cordis.patch.yml
 - insert:
-    - id: markdown-mermaid-preview
-      name: 'dsh-markdown-mermaid-preview'
+    - id: workspace-file-preview
+      name: 'dsh-workspace-file-preview'
 ```
 
 Requirements: the DeepSeek Harness CLI (`dsh`) on your `PATH`, and Node.js 22
@@ -66,11 +67,29 @@ only if you want to rebuild the client bundles from source.
 ### Uninstall
 
 ```bash
-dsh plugin --profile web remove dsh-markdown-mermaid-preview
+dsh plugin --profile web remove dsh-workspace-file-preview
 ```
 
 Then delete the bundle row from `<profile>/cordis.patch.yml` and restart the
 Harness.
+
+### Upgrading from the old name
+
+This plugin was called **Markdown & Mermaid Preview** until v1.2.0, and
+installed as `dsh-markdown-mermaid-preview`. The name changed because the
+plugin stopped being only about Markdown: it also annotates HTML and images,
+and it plays video.
+
+To move over:
+
+```bash
+dsh plugin --profile web remove dsh-markdown-mermaid-preview
+```
+
+Then remove the old bundle row from `<profile>/cordis.patch.yml`, install this
+version as above, and restart the Harness. Your pinned-file list is carried
+over — the plugin reads the old `mmd-pinned::<workspace>` key once and then
+drops it.
 
 ## How it works
 
@@ -81,15 +100,15 @@ process. It registers four commands on the session:
 
 | Command | What it does |
 | --- | --- |
-| `/mmd-save` | write edited content back to a workspace file |
-| `/mmd-fs` | file operations for the file-tree context menu: `mkdir`, `create`, `rename`/`move`, `copy`, `delete` |
+| `/wfp-save` | write edited content back to a workspace file |
+| `/wfp-fs` | file operations for the file-tree context menu: `mkdir`, `create`, `rename`/`move`, `copy`, `delete` |
 | `/rename` | rename the current session |
 | `/retitle` | regenerate the session title from the whole conversation |
 
 **Client half** — `plugin/src/client-entry.js`, a browser bundle that the
 Harness web shell loads. It registers three document-preview tabs in the
 right-hand sidebar (`Markdown (Mermaid)`, `HTML (AI Annotate)`,
-`Image (AI Annotate)`), the *Edit* and *Locate* document actions, and the
+`Image (AI Annotate)`, `Video`), the *Edit* and *Locate* document actions, and the
 *Files* tab (workspace tree, search, pinning, context menu). The web side
 calls the host commands above through the Harness remote-command API — it
 never touches the filesystem directly from the browser.
@@ -124,7 +143,7 @@ bundle.
 A rebuild is *not* guaranteed to be byte-identical to the committed bundle:
 npm and pnpm lay out nested dependencies differently, so a few transitive
 packages inside `client.mermaid.js` can resolve to a different copy. The
-committed bundles are the ones that shipped in the `v1.0.0` release — rebuild
+committed bundles are the ones that shipped in the `v1.2.0` release — rebuild
 and commit the result if you change `plugin/src`.
 
 ## Security and privacy
@@ -142,7 +161,9 @@ run locally in your browser.
 * **What is written to disk.** Only one file: the bundle row in
   `<profile>/cordis.patch.yml`. Nothing else, and no secrets.
 * **What is stored in the browser.** Your pinned-files list, in `localStorage`
-  under `mmd-pinned::<workspace>`. Clearing the site data removes it.
+  under `wfp-pinned::<workspace>`. Clearing the site data removes it. A list
+  written under the plugin's previous name (`mmd-pinned::<workspace>`) is read
+  once and then dropped, so renaming the plugin does not empty your pins.
 * **Third-party code.** The bundles inline MIT-licensed libraries (mermaid,
   marked, turndown and mermaid's own dependency tree). They are ordinary
   browser libraries with no telemetry.

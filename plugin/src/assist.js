@@ -17,10 +17,10 @@
  */
 
 /** The route the Host registers for the annotation draft. */
-export const ROUTE = '/api/markdown-mermaid-preview';
+export const ROUTE = '/api/workspace-file-preview';
 
 /** The error codes that mean: this Host does not know the route (yet). */
-const UNAVAILABLE_CODES = new Set(['mmd-annotate/unknown-method', 'mmd-annotate/unknown-action']);
+const UNAVAILABLE_CODES = new Set(['wfp-annotate/unknown-method', 'wfp-annotate/unknown-action']);
 
 /** The message a Host without the route gets. */
 const UNAVAILABLE_MESSAGE = '宿主尚未提供 AI 辅助，请重启应用后重试';
@@ -33,7 +33,7 @@ const UNAVAILABLE_MESSAGE = '宿主尚未提供 AI 辅助，请重启应用后�
  */
 function makeError(message, cause) {
   const error = new Error(message);
-  error.code = 'mmd-annotate/failed';
+  error.code = 'wfp-annotate/failed';
   if (cause !== undefined) error.cause = cause;
   return error;
 }

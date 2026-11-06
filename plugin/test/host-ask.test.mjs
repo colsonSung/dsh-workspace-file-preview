@@ -117,7 +117,7 @@ test('the client is told what the Host refused', async () => {
     () => requestAnswer(payload, {
       fetch: async () => ({
         status: 200,
-        json: async () => ({ ok: false, error: { code: 'mmd-annotate/failed', message: '宿主未配置可用模型，AI 辅助不可用' } }),
+        json: async () => ({ ok: false, error: { code: 'wfp-annotate/failed', message: '宿主未配置可用模型，AI 辅助不可用' } }),
       }),
     }),
     /宿主未配置可用模型/,

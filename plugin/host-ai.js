@@ -104,7 +104,7 @@ function text(value) {
  */
 function aiError(message, cause) {
   const error = new Error(message);
-  error.code = 'mmd-annotate/failed';
+  error.code = 'wfp-annotate/failed';
   if (cause !== undefined) error.cause = cause;
   return error;
 }
