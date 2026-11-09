@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture, hand-written to match the shape of Mermaid v12 output:
+     a flowchart whose single subgraph title is Latin only. Not captured from a
+     browser; it exists so the Latin zone-eyebrow path (mono, tracked, uppercase)
+     can be tested without a second browser capture. -->
+<svg id="d9" width="100%" xmlns="http://www.w3.org/2000/svg" class="flowchart" style="max-width: 420px;" viewBox="0 0 420 260" role="graphics-document document" aria-roledescription="flowchart-v2">
+  <g class="clusters">
+    <g class="cluster" id="d9-cluster-payments" data-look="neo">
+      <rect x="100" y="40" width="300" height="180" rx="0" ry="0"></rect>
+      <g class="cluster-label" transform="translate(250, 40)">
+        <foreignObject width="80" height="24">
+          <div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell; white-space: nowrap; line-height: 1.5;">
+            <span class="nodeLabel">PAYMENTS</span>
+          </div>
+        </foreignObject>
+      </g>
+    </g>
+  </g>
+  <g class="edgePaths"></g>
+  <g class="edgeLabels"></g>
+  <g class="nodes">
+    <g class="node default" id="d9-flowchart-PAY-0" transform="translate(180, 120)">
+      <rect class="basic label-container" x="-60" y="-20" width="120" height="40"></rect>
+      <g class="label" transform="translate(-50, -10)">
+        <rect></rect>
+        <foreignObject width="100" height="20">
+          <div xmlns="http://www.w3.org/1999/xhtml" style="display: table; white-space: nowrap; line-height: 1.5; max-width: 100px; text-align: center; width: 100px;">
+            <span class="nodeLabel">Authorize</span>
+          </div>
+        </foreignObject>
+      </g>
+    </g>
+    <g class="node default" id="d9-flowchart-CAP-1" transform="translate(340, 120)">
+      <rect class="basic label-container" x="-60" y="-20" width="120" height="40"></rect>
+      <g class="label" transform="translate(-50, -10)">
+        <rect></rect>
+        <foreignObject width="100" height="20">
+          <div xmlns="http://www.w3.org/1999/xhtml" style="display: table; white-space: nowrap; line-height: 1.5; max-width: 100px; text-align: center; width: 100px;">
+            <span class="nodeLabel">Capture</span>
+          </div>
+        </foreignObject>
+      </g>
+    </g>
+  </g>
+</svg>

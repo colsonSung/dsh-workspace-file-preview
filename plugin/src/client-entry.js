@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { isAbsolutePath, joinPath, pathBasename, pathDirname, pathParts, relativeToRoot, toPosixPath } from '../paths.js';
 import { buildAttachmentParts, collectFiles, createAttachments, dropAttachment, isImageFile, revokeAttachments } from './attachments.js';
 import { requestAnswer, requestDraft } from './assist.js';
+import { cssVars, mermaidConfig, readFocalDirective, stripOwnDirectives } from './mermaid-skin.js';
+import { normalizeMermaidSvg } from './mermaid-svg.js';
 import { VIDEO_EXTENSIONS, VideoBody } from './video.js';
 
 // Optional host primitive; fall back to plain text when the module table lacks it.
@@ -14,8 +16,23 @@ try {
 }
 
 const NS = 'workspaceFilePreview';
-const BODY_ID = 'dsh-workspace-file-preview/markdown';
-const VIDEO_ID = 'dsh-workspace-file-preview/video';
+/**
+ * The id prefix every document preview and slot this plugin registers is built
+ * from. It is the package name: the local link uses an @local/ scope and the
+ * published package does not, and a preview registered under a name the host
+ * does not know simply never appears. The build injects the real name
+ * (see build.mjs); node tests and an unbundled import fall back to the local
+ * name unless a test sets globalThis.__WFP_PACKAGE_NAME__.
+ */
+const PACKAGE_ID =
+  typeof __WFP_PACKAGE_NAME__ === 'string'
+    ? __WFP_PACKAGE_NAME__
+    : typeof globalThis.__WFP_PACKAGE_NAME__ === 'string'
+      ? globalThis.__WFP_PACKAGE_NAME__
+      : '@local/workspace-file-preview';
+
+const BODY_ID = PACKAGE_ID + '/markdown';
+const VIDEO_ID = PACKAGE_ID + '/video';
 
 const zh = {
   'viewer.label': 'Markdown (Mermaid)',
@@ -30,6 +47,9 @@ const zh = {
   'mermaid.zoomIn': '放大',
   'mermaid.zoomOut': '缩小',
   'mermaid.fit': '自适应',
+  'mermaid.fullscreen': '全屏查看',
+  'mermaid.exitFullscreen': '退出全屏',
+  'mermaid.viewer': '图表',
   'reveal.tooltip': '在文件树中定位',
   'reveal.label': '定位',
   'htmlAnnotate.label': 'HTML (AI 标注)',
@@ -199,6 +219,9 @@ const en = {
   'mermaid.zoomIn': 'Zoom in',
   'mermaid.zoomOut': 'Zoom out',
   'mermaid.fit': 'Fit',
+  'mermaid.fullscreen': 'View full screen',
+  'mermaid.exitFullscreen': 'Exit full screen',
+  'mermaid.viewer': 'Diagram',
   'reveal.tooltip': 'Reveal in file tree',
   'reveal.label': 'Locate',
   'htmlAnnotate.label': 'HTML (AI Annotate)',
@@ -469,105 +492,166 @@ function isDarkMode() {
   return false;
 }
 
-const MERMAID_THEMES = {
-  light: {
-    background: 'transparent',
-    primaryColor: '#e6f1ff',
-    primaryBorderColor: '#8fb8ec',
-    primaryTextColor: '#1c56b8',
-    secondaryColor: '#f2f7ff',
-    secondaryBorderColor: '#bcd4f4',
-    secondaryTextColor: '#2b5aa0',
-    tertiaryColor: '#ffffff',
-    lineColor: '#8faddd',
-    textColor: '#334155',
-    mainBkg: '#e6f1ff',
-    nodeBorder: '#8fb8ec',
-    clusterBkg: '#f7fafe',
-    clusterBorder: '#d5e0f0',
-    titleColor: '#64748b',
-    edgeLabelBackground: '#ffffff',
-    actorBkg: '#e6f1ff',
-    actorBorder: '#8fb8ec',
-    actorTextColor: '#1c56b8',
-    signalColor: '#8faddd',
-    signalTextColor: '#334155',
-    labelBoxBkgColor: '#e6f1ff',
-    labelBoxBorderColor: '#8fb8ec',
-    labelTextColor: '#1c56b8',
-    noteBkgColor: '#fff7e0',
-    noteBorderColor: '#ecd28f',
-    noteTextColor: '#7a5b16',
-    fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
-  },
-  dark: {
-    background: 'transparent',
-    primaryColor: '#1e3a5c',
-    primaryBorderColor: '#4d719c',
-    primaryTextColor: '#bcd6ff',
-    secondaryColor: '#22304a',
-    secondaryBorderColor: '#3d5878',
-    secondaryTextColor: '#a9c8f2',
-    tertiaryColor: '#161c26',
-    lineColor: '#54749f',
-    textColor: '#cbd5e1',
-    mainBkg: '#1e3a5c',
-    nodeBorder: '#4d719c',
-    clusterBkg: '#182030',
-    clusterBorder: '#33404f',
-    titleColor: '#93a1b3',
-    edgeLabelBackground: '#1c2430',
-    actorBkg: '#1e3a5c',
-    actorBorder: '#4d719c',
-    actorTextColor: '#bcd6ff',
-    signalColor: '#54749f',
-    signalTextColor: '#cbd5e1',
-    labelBoxBkgColor: '#1e3a5c',
-    labelBoxBorderColor: '#4d719c',
-    labelTextColor: '#bcd6ff',
-    noteBkgColor: '#3a2f16',
-    noteBorderColor: '#8a743a',
-    noteTextColor: '#ecd28f',
-    fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
-  },
-};
+/**
+ * Fit floor: below this the browser scrolls the figure instead of shrinking it.
+ *
+ * A diagram scaled to 0.4 in a narrow panel is a picture of a diagram, not a
+ * diagram: 14px node labels land under 6px and CJK becomes a texture. The
+ * floor keeps the type readable and lets the reader pan instead.
+ */
+const MIN_FIT_SCALE = 0.68;
+const MAX_FIT_HEIGHT = 560;
+const MIN_SCALE = 0.4;
+const MAX_SCALE = 4;
+const DIAGRAM_ZOOM_STEPS = [0.5, 0.7, 0.85, 1, 1.2, 1.5, 1.8, 2.2, 2.8, 3.5, 4];
+const CACHE_LIMIT = 48;
 
-let mermaidSerial = 0;
+/**
+ * Rendered SVGs keyed by source + mode + focal.
+ *
+ * The panel unmounts and remounts the body while the reader scrolls and while
+ * a file streams, and Mermaid rendering is the expensive part of the preview.
+ * Keeping the last few results makes a remount free.
+ */
+const svgCache = new Map();
 
-const MAX_FIT_HEIGHT = 640;
-const ZOOM_FACTORS = [0.5, 0.7, 0.85, 1, 1.25, 1.6, 2, 2.5, 3.2, 4];
+/**
+ * Mermaid initializes a module-global config, so two diagrams that render at
+ * the same time can read each other's theme. Renders are serialized through
+ * this promise chain instead.
+ */
+let renderQueue = Promise.resolve();
+let renderSerial = 0;
 
+/** Theme change fan-out: one observer for every diagram in the document. */
+const themeListeners = new Set();
+let themeObserver = null;
+let lastThemeDark = false;
+
+/** Read the host theme without throwing when the document is not ready. */
+function currentDark() {
+  try {
+    return isDarkMode();
+  } catch {
+    return false;
+  }
+}
+
+/** Start the single theme watcher on first use. */
+function ensureThemeWatch() {
+  if (themeObserver !== null) return;
+  const notify = () => {
+    const dark = currentDark();
+    if (dark === lastThemeDark) return;
+    lastThemeDark = dark;
+    for (const listener of themeListeners) listener(dark);
+  };
+  lastThemeDark = currentDark();
+  try {
+    themeObserver = new MutationObserver(notify);
+    const targets = [document.documentElement, document.body].filter((node) => node !== null);
+    for (const target of targets) {
+      themeObserver.observe(target, {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'data-theme', 'data-color-scheme', 'data-mode'],
+      });
+    }
+  } catch {
+    themeObserver = null;
+  }
+  const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+  media?.addEventListener?.('change', notify);
+}
+
+/** Subscribe to host theme flips. @returns {Function} unsubscribe. */
+function subscribeTheme(listener) {
+  ensureThemeWatch();
+  themeListeners.add(listener);
+  return () => {
+    themeListeners.delete(listener);
+  };
+}
+
+/** Read a cached render and mark it recently used. */
+function cachedRender(key) {
+  const value = svgCache.get(key);
+  if (value === undefined) return undefined;
+  svgCache.delete(key);
+  svgCache.set(key, value);
+  return value;
+}
+
+/** Store a render, evicting the least recently used one past the cap. */
+function storeRender(key, svg) {
+  svgCache.set(key, svg);
+  while (svgCache.size > CACHE_LIMIT) {
+    const oldest = svgCache.keys().next().value;
+    svgCache.delete(oldest);
+  }
+}
+
+/**
+ * Render and normalize one diagram.
+ * @param {string} source - the Mermaid source without our own directives.
+ * @param {boolean} dark - which skin to draw.
+ * @param {string[]} focal - node ids to accent.
+ * @returns {Promise<string>} the normalized SVG markup.
+ */
+function renderDiagram(source, dark, focal) {
+  const key = (dark ? 'dark:' : 'light:') + (focal.length > 0 ? focal.join(',') : '-') + ':' + source;
+  const cached = cachedRender(key);
+  if (cached !== undefined) return Promise.resolve(cached);
+  const task = renderQueue.then(async () => {
+    const chunk = await require.async('./client.mermaid.js');
+    const mermaid = chunk.default ?? chunk;
+    mermaid.initialize(mermaidConfig(dark));
+    renderSerial += 1;
+    const rendered = await mermaid.render('wfp-preview-' + renderSerial, source);
+    const normalized = normalizeMermaidSvg(rendered.svg, { dark, focal });
+    storeRender(key, normalized);
+    return normalized;
+  });
+  renderQueue = task.catch(() => undefined);
+  return task;
+}
+
+/**
+ * A Mermaid block in a Markdown document, drawn as a figure.
+ *
+ * The figure is a paper card with a hairline border, not a chrome-less blob:
+ * it has to read as a figure next to prose, keep its own type size when the
+ * panel is narrow (scroll rather than shrink), survive a host theme flip, and
+ * open full screen when the diagram is wider than the panel.
+ */
 function MermaidView({ code, done, t }) {
   const [svg, setSvg] = useState(null);
   const [failed, setFailed] = useState(false);
-  const [natural, setNatural] = useState(null); // intrinsic diagram size from the viewBox
-  const [factor, setFactor] = useState(1); // 1 = fit; other values zoom relative to fit
-  const [boxWidth, setBoxWidth] = useState(0);
+  const [natural, setNatural] = useState(null);
+  const [width, setWidth] = useState(0);
+  const [dark, setDark] = useState(currentDark);
+  const [userScale, setUserScale] = useState(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const boxRef = useRef(null);
+  const scrollRef = useRef(null);
+  const dragRef = useRef(null);
+  const directive = useMemo(() => readFocalDirective(code), [code]);
+  const source = useMemo(() => stripOwnDirectives(code), [code]);
+  const focalKey = directive.ids.join(',');
+  const ready = done !== false;
+
+  useEffect(() => subscribeTheme(setDark), []);
 
   useEffect(() => {
+    if (!ready) return undefined;
     let cancelled = false;
     setSvg(null);
     setFailed(false);
     setNatural(null);
-    setFactor(1);
-    require
-      .async('./client.mermaid.js')
-      .then((chunk) => chunk.default ?? chunk)
-      .then((mermaid) => {
-        const dark = isDarkMode();
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: 'strict',
-          theme: 'base',
-          themeVariables: dark ? MERMAID_THEMES.dark : MERMAID_THEMES.light,
-          flowchart: { curve: 'bumpX', padding: 6 },
-          sequence: { boxMargin: 10, messageMargin: 36 },
-        });
-        return mermaid.render(`wfp-preview-${++mermaidSerial}`, code);
-      })
-      .then((result) => {
-        if (!cancelled) setSvg(result.svg);
+    setUserScale(null);
+    renderDiagram(source, dark, directive.ids)
+      .then((markup) => {
+        if (!cancelled) setSvg(markup);
       })
       .catch(() => {
         if (!cancelled) setFailed(true);
@@ -575,102 +659,228 @@ function MermaidView({ code, done, t }) {
     return () => {
       cancelled = true;
     };
-  }, [code, done]);
+  }, [source, dark, focalKey, ready]);
 
   useLayoutEffect(() => {
     if (svg === null || boxRef.current === null) return;
-    const el = boxRef.current.querySelector('svg');
-    if (el === null) return;
-    const viewBox = (el.getAttribute('viewBox') ?? '').trim().split(/[\s,]+/).map(Number);
-    if (viewBox.length === 4 && viewBox[2] > 0 && viewBox[3] > 0) {
-      setNatural({ w: viewBox[2], h: viewBox[3] });
-    } else {
-      setNatural({ w: el.scrollWidth || 800, h: el.scrollHeight || 600 });
-    }
+    const element = boxRef.current.querySelector('.wfp-mermaid-stage svg');
+    if (element === null) return;
+    const box = (element.getAttribute('viewBox') ?? '').trim().split(/[\s,]+/).map(Number);
+    if (box.length === 4 && box[2] > 0 && box[3] > 0) setNatural({ w: box[2], h: box[3] });
   }, [svg]);
 
   useEffect(() => {
-    if (boxRef.current === null) return undefined;
+    const element = scrollRef.current;
+    if (element === null) return undefined;
     const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width;
-      if (width) setBoxWidth(width);
+      const next = entries[0]?.contentRect.width;
+      if (next) setWidth(next);
     });
-    observer.observe(boxRef.current);
+    observer.observe(element);
     return () => observer.disconnect();
-  }, [svg]);
+  }, [svg, fullscreen]);
+
+  useEffect(() => {
+    if (!fullscreen) return undefined;
+    const onKey = (event) => {
+      if (event.key === 'Escape') setFullscreen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [fullscreen]);
+
+  const heightLimit = Math.min(MAX_FIT_HEIGHT, Math.max(240, window.innerHeight * 0.72));
+  const fit =
+    natural === null || width === 0 ? 1 : Math.min(1, width / natural.w, heightLimit / natural.h);
+  const auto = Math.max(fit, MIN_FIT_SCALE);
+  const scale = userScale === null ? auto : userScale;
+  const stage =
+    natural === null
+      ? undefined
+      : { width: Math.round(natural.w * scale) + 'px', height: Math.round(natural.h * scale) + 'px' };
+  const percent = Math.round(scale * 100);
+  const zoomTo = (next) => setUserScale(Math.min(MAX_SCALE, Math.max(MIN_SCALE, next)));
+  const stepZoom = (direction) => {
+    if (direction > 0) {
+      const next = DIAGRAM_ZOOM_STEPS.find((value) => value > scale + 0.001);
+      zoomTo(next === undefined ? MAX_SCALE : next);
+      return;
+    }
+    const previous = [...DIAGRAM_ZOOM_STEPS].reverse().find((value) => value < scale - 0.001);
+    zoomTo(previous === undefined ? MIN_SCALE : previous);
+  };
+  const copySource = async () => {
+    await copyText(source);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  };
+  const startDrag = (event) => {
+    const element = scrollRef.current;
+    if (element === null || event.button !== 0) return;
+    if (element.scrollWidth <= element.clientWidth + 1 && element.scrollHeight <= element.clientHeight + 1) return;
+    dragRef.current = { x: event.clientX, y: event.clientY, left: element.scrollLeft, top: element.scrollTop };
+    element.setPointerCapture?.(event.pointerId);
+    element.classList.add('wfp-mermaid-dragging');
+  };
+  const moveDrag = (event) => {
+    const state = dragRef.current;
+    const element = scrollRef.current;
+    if (state === null || element === null) return;
+    element.scrollLeft = state.left - (event.clientX - state.x);
+    element.scrollTop = state.top - (event.clientY - state.y);
+  };
+  const endDrag = () => {
+    dragRef.current = null;
+    scrollRef.current?.classList.remove('wfp-mermaid-dragging');
+  };
 
   if (failed) {
-    return h('div', { className: 'wfp-mermaid wfp-mermaid-failed' }, [
-      h('div', { className: 'wfp-mermaid-note', key: 'note' }, t('mermaid.failed')),
-      h('pre', { key: 'pre' }, h('code', null, code)),
+    return h('figure', { className: 'wfp-mermaid wfp-mermaid-failed', style: cssVars(dark) }, [
+      h('div', { className: 'wfp-mermaid-failed-head', key: 'head' }, [
+        h('span', { className: 'wfp-mermaid-note', key: 'note' }, t('mermaid.failed')),
+        h(
+          'button',
+          { type: 'button', key: 'copy', className: 'wfp-mermaid-text-button', onClick: copySource },
+          copied ? t('code.copied') : t('code.copy'),
+        ),
+      ]),
+      h('pre', { key: 'pre' }, h('code', null, source)),
     ]);
   }
   if (svg === null) {
-    return h('div', { className: 'wfp-mermaid wfp-mermaid-pending' }, t('mermaid.rendering'));
+    return h(
+      'div',
+      { className: 'wfp-mermaid wfp-mermaid-pending', style: cssVars(dark) },
+      t('mermaid.rendering'),
+    );
   }
 
-  const fitScale =
-    natural !== null && boxWidth > 0 ? Math.min(1, boxWidth / natural.w, MAX_FIT_HEIGHT / natural.h) : 1;
-  const scale = fitScale * factor;
-  const stage =
-    natural !== null
-      ? {
-          width: `${Math.max(1, Math.round(natural.w * scale))}px`,
-          height: `${Math.max(1, Math.round(natural.h * scale))}px`,
-        }
-      : undefined;
-  const step = (direction) => {
-    const index = ZOOM_FACTORS.findIndex((value) => Math.abs(value - factor) < 0.001);
-    const next = Math.min(ZOOM_FACTORS.length - 1, Math.max(0, (index === -1 ? 3 : index) + direction));
-    setFactor(ZOOM_FACTORS[next]);
-  };
+  const controls = (key) =>
+    h('div', { className: 'wfp-mermaid-tools', key }, [
+      h(
+        'button',
+        {
+          type: 'button',
+          key: 'out',
+          title: t('mermaid.zoomOut'),
+          'aria-label': t('mermaid.zoomOut'),
+          disabled: scale <= MIN_SCALE + 0.001,
+          onClick: () => stepZoom(-1),
+        },
+        '−',
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          key: 'ratio',
+          className: 'wfp-mermaid-ratio',
+          title: t('mermaid.fit'),
+          'aria-label': t('mermaid.fit') + ' ' + percent + '%',
+          onClick: () => setUserScale(null),
+        },
+        percent + '%',
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          key: 'in',
+          title: t('mermaid.zoomIn'),
+          'aria-label': t('mermaid.zoomIn'),
+          disabled: scale >= MAX_SCALE - 0.001,
+          onClick: () => stepZoom(1),
+        },
+        '+',
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          key: 'full',
+          className: 'wfp-mermaid-full',
+          title: fullscreen ? t('mermaid.exitFullscreen') : t('mermaid.fullscreen'),
+          'aria-label': fullscreen ? t('mermaid.exitFullscreen') : t('mermaid.fullscreen'),
+          'aria-pressed': fullscreen ? 'true' : 'false',
+          onClick: () => setFullscreen((value) => !value),
+        },
+        fullscreen ? '⤡' : '⤢',
+      ),
+    ]);
 
-  return h('div', { className: 'wfp-mermaid', ref: boxRef }, [
-    h(
-      'div',
-      { className: 'wfp-mermaid-scroll', key: 'scroll' },
-      h('div', { className: 'wfp-mermaid-stage', style: stage, dangerouslySetInnerHTML: { __html: svg } }),
-    ),
-    natural === null
-      ? null
-      : h('div', { className: 'wfp-mermaid-controls', key: 'controls' }, [
-          h(
-            'button',
-            {
-              type: 'button',
-              key: 'out',
-              title: t('mermaid.zoomOut'),
-              'aria-label': t('mermaid.zoomOut'),
-              disabled: factor <= ZOOM_FACTORS[0],
-              onClick: () => step(-1),
-            },
-            '−',
-          ),
-          h(
-            'button',
-            {
-              type: 'button',
-              key: 'fit',
-              className: factor === 1 ? 'wfp-mermaid-scale wfp-active' : 'wfp-mermaid-scale',
-              title: t('mermaid.fit'),
-              onClick: () => setFactor(1),
-            },
-            `${Math.round(scale * 100)}%`,
-          ),
-          h(
-            'button',
-            {
-              type: 'button',
-              key: 'in',
-              title: t('mermaid.zoomIn'),
-              'aria-label': t('mermaid.zoomIn'),
-              disabled: factor >= ZOOM_FACTORS[ZOOM_FACTORS.length - 1],
-              onClick: () => step(1),
-            },
-            '+',
-          ),
-        ]),
-  ]);
+  const overlay = fullscreen
+    ? createPortal(
+        h(
+          'div',
+          {
+            className: 'wfp-mermaid-overlay',
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-label': t('mermaid.viewer'),
+            style: cssVars(dark),
+          },
+          [
+            h('div', { className: 'wfp-mermaid-overlay-bar', key: 'bar' }, [
+              h('span', { className: 'wfp-mermaid-overlay-title', key: 'title' }, t('mermaid.viewer')),
+              controls('overlay-controls'),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  key: 'close',
+                  className: 'wfp-mermaid-overlay-close',
+                  title: t('mermaid.exitFullscreen'),
+                  'aria-label': t('mermaid.exitFullscreen'),
+                  onClick: () => setFullscreen(false),
+                },
+                '✕',
+              ),
+            ]),
+            h('div', { className: 'wfp-mermaid-overlay-body', key: 'body' }, [
+              h('div', { className: 'wfp-mermaid-stage', key: 'stage', style: stage }, [
+                h('div', { key: 'svg', dangerouslySetInnerHTML: { __html: svg } }),
+              ]),
+            ]),
+          ],
+        ),
+        document.body,
+      )
+    : null;
+
+  return h(
+    'figure',
+    { className: 'wfp-mermaid', style: cssVars(dark), ref: boxRef, 'aria-label': t('mermaid.viewer') },
+    [
+      h('div', { className: 'wfp-mermaid-frame', key: 'frame' }, [
+        h(
+          'div',
+          { className: 'wfp-mermaid-paper', key: 'paper' },
+          [
+            h(
+              'div',
+              {
+                className: 'wfp-mermaid-scroll',
+                key: 'scroll',
+                ref: scrollRef,
+                onPointerDown: startDrag,
+                onPointerMove: moveDrag,
+                onPointerUp: endDrag,
+                onPointerCancel: endDrag,
+                onPointerLeave: endDrag,
+              },
+              [
+                h('div', { className: 'wfp-mermaid-stage', key: 'stage', style: stage }, [
+                  h('div', { key: 'svg', dangerouslySetInnerHTML: { __html: svg } }),
+                ]),
+              ],
+            ),
+          ],
+        ),
+        controls('controls'),
+      ]),
+      overlay,
+    ],
+  );
 }
 
 const STYLE = `
@@ -678,19 +888,38 @@ const STYLE = `
 .wfp-frontmatter{border:.5px solid var(--dsw-alias-border-l2,#e2e2e2);border-radius:var(--dsw-radius-md,6px);background:var(--dsw-alias-bg-layer-1,transparent);font-size:12px;color:var(--dsw-alias-label-primary,inherit);white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 16px;padding:10px 12px}
 .wfp-frontmatter:empty{display:none}
 .wfp-frontmatter pre{margin:0;font-family:var(--ds-font-family-code,monospace);white-space:inherit}
-.wfp-mermaid{position:relative;margin:12px 0}
-.wfp-mermaid-scroll{overflow:auto;max-height:78vh;border:.5px solid var(--dsw-alias-border-l2,#e6e6e6);border-radius:var(--dsw-radius-md,8px);background:var(--dsw-alias-bg-layer-1,transparent);padding:16px 12px}
-.wfp-mermaid-stage{margin:0 auto}
-.wfp-mermaid-stage svg{display:block;width:100%!important;height:100%!important;max-width:none!important}
-.wfp-mermaid-controls{position:absolute;top:8px;right:8px;display:flex;gap:2px;align-items:center;padding:2px;border:.5px solid var(--dsw-alias-border-l2,#ddd);border-radius:8px;background:var(--dsw-alias-bg-layer-1,#fff);box-shadow:0 1px 4px rgba(0,0,0,.08)}
-.wfp-mermaid-controls button{min-width:26px;height:22px;padding:0 6px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary,inherit);font-size:12px;line-height:1;cursor:pointer}
-.wfp-mermaid-controls button:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.12))}
-.wfp-mermaid-controls button:disabled{opacity:.35;cursor:default}
-.wfp-mermaid-controls .wfp-mermaid-scale{font-variant-numeric:tabular-nums}
-.wfp-mermaid-controls .wfp-active{color:#247bbf}
-.wfp-mermaid-pending{font-size:12px;opacity:.6;padding:8px 0}
-.wfp-mermaid-note{font-size:12px;color:#b0503c;margin:4px 0}
-.wfp-mermaid-failed pre{background:var(--dsw-alias-bg-layer-1,rgba(127,127,127,.08));border-radius:6px;padding:10px 12px;overflow-x:auto;font-size:12px}
+.wfp-mermaid{position:relative;margin:16px 0;--wfp-paper:#f5f5f5;--wfp-paper-2:#ececec;--wfp-ink:#2d3142;--wfp-muted:#4f5d75;--wfp-soft:#5a6580;--wfp-rule:rgba(45,49,66,.12);--wfp-rule-solid:#bfc0c0;--wfp-accent:#bf4520;--wfp-dot:rgba(45,49,66,.10);--wfp-mono:ui-monospace,SFMono-Regular,Menlo,monospace;--wfp-sans:inherit}
+.wfp-mermaid-frame{position:relative;border:.5px solid var(--wfp-rule);border-radius:8px;overflow:hidden}
+.wfp-mermaid-paper{background-color:var(--wfp-paper);background-image:radial-gradient(var(--wfp-dot) 1px,transparent 1px);background-size:22px 22px;background-position:center}
+.wfp-mermaid-scroll{overflow:auto;max-height:min(72vh,640px);padding:14px 12px;cursor:grab;scrollbar-width:none;-ms-overflow-style:none}
+.wfp-mermaid-scroll::-webkit-scrollbar{display:none}
+.wfp-mermaid-dragging{cursor:grabbing;user-select:none}
+.wfp-mermaid-stage{margin:0 auto;width:max-content}
+.wfp-mermaid-stage svg{display:block;width:100%;height:100%;max-width:none;overflow:visible}
+.wfp-mermaid-tools{position:absolute;top:8px;right:8px;display:flex;gap:1px;align-items:center;padding:2px;border:.5px solid var(--wfp-rule);border-radius:7px;background:var(--wfp-paper);opacity:0;transition:opacity .14s ease}
+.wfp-mermaid:hover .wfp-mermaid-tools,.wfp-mermaid:focus-within .wfp-mermaid-tools{opacity:1}
+@media (hover:none){.wfp-mermaid-tools{opacity:1}}
+.wfp-mermaid-tools button{min-width:24px;height:22px;padding:0 6px;border:0;border-radius:5px;background:transparent;color:var(--wfp-muted);font-family:var(--wfp-mono);font-size:11px;line-height:1;cursor:pointer}
+.wfp-mermaid-tools button:hover:not(:disabled){background:var(--wfp-paper-2);color:var(--wfp-ink)}
+.wfp-mermaid-tools button:focus-visible{outline:1.5px solid var(--wfp-accent);outline-offset:1px}
+.wfp-mermaid-tools button:disabled{opacity:.35;cursor:default}
+.wfp-mermaid-tools .wfp-mermaid-ratio{font-variant-numeric:tabular-nums;min-width:40px}
+.wfp-mermaid-overlay{position:fixed;inset:0;z-index:1200;display:flex;flex-direction:column;background-color:var(--wfp-paper);background-image:radial-gradient(var(--wfp-dot) 1px,transparent 1px);background-size:22px 22px}
+.wfp-mermaid-overlay-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:.5px solid var(--wfp-rule);background:var(--wfp-paper)}
+.wfp-mermaid-overlay-title{font-family:var(--wfp-mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--wfp-soft)}
+.wfp-mermaid-overlay-bar .wfp-mermaid-tools{position:static;margin-left:auto;opacity:1;border:0;background:transparent;padding:0}
+.wfp-mermaid-overlay-close{min-width:26px;height:26px;border:0;border-radius:6px;background:transparent;color:var(--wfp-muted);font-size:13px;cursor:pointer}
+.wfp-mermaid-overlay-close:hover{background:var(--wfp-paper-2);color:var(--wfp-ink)}
+.wfp-mermaid-overlay-body{flex:1;overflow:auto;padding:28px 24px}
+.wfp-mermaid svg .nodeLabel,.wfp-mermaid svg .nodeLabel p,.wfp-mermaid svg .nodeLabel span{font-family:var(--wfp-sans);font-size:14px;font-weight:600;line-height:1.35}
+.wfp-mermaid svg .messageText{font-weight:500}
+.wfp-mermaid-pending{font-size:12px;color:var(--wfp-muted);padding:10px 0}
+.wfp-mermaid-failed{border:.5px solid var(--wfp-rule);border-radius:8px;background:var(--wfp-paper);padding:10px 12px}
+.wfp-mermaid-failed-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
+.wfp-mermaid-note{font-size:12px;color:var(--wfp-accent)}
+.wfp-mermaid-text-button{border:0;border-radius:5px;background:transparent;color:var(--wfp-muted);font-family:var(--wfp-mono);font-size:11px;padding:2px 6px;cursor:pointer}
+.wfp-mermaid-text-button:hover{background:var(--wfp-paper-2);color:var(--wfp-ink)}
+.wfp-mermaid-failed pre{margin:0;background:var(--wfp-paper-2);border-radius:6px;padding:10px 12px;overflow-x:auto;font-size:12px}
 .wfp-plain{white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--ds-font-family-code,monospace);font-size:12px}
 .wfp-reveal{position:relative;display:inline-flex}
 .wfp-reveal-trigger{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary,currentColor);cursor:pointer}
@@ -1133,7 +1362,7 @@ function sparkIcon(size = 13) {
 }
 
 /* Take over document tab chips so file-type icons stay distinguishable. */
-const FILES_TYPE_ID = 'dsh-workspace-file-preview/files';
+const FILES_TYPE_ID = PACKAGE_ID + '/files';
 const DOCUMENT_TYPE_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview';
 
 function DocumentTitleChip({ useTabInfo }) {
@@ -2313,7 +2542,7 @@ export function AnnotationItem({ item, index, text, title, t, onEdit, onRemove }
 /* HTML annotation renderer: element picking inside a sandboxed frame. */
 /* ------------------------------------------------------------------ */
 
-const HTML_ANNOTATE_ID = 'dsh-workspace-file-preview/html-annotate';
+const HTML_ANNOTATE_ID = PACKAGE_ID + '/html-annotate';
 
 const PICKER_STYLE =
   '.wfp-pick-hover{position:fixed;pointer-events:none;border:2px solid #247bbf;border-radius:3px;z-index:2147483646;display:none;background:rgba(36,123,191,.06)}' +
@@ -4439,7 +4668,7 @@ export function MarkdownBody({ ctx, content, resourceAddress, useResource, input
 /* Image annotation renderer: drag-select regions on a raster image.   */
 /* ------------------------------------------------------------------ */
 
-const IMAGE_ANNOTATE_ID = 'dsh-workspace-file-preview/image-annotate';
+const IMAGE_ANNOTATE_ID = PACKAGE_ID + '/image-annotate';
 
 /**
  * The place an image region covers, in the words the prompt uses.

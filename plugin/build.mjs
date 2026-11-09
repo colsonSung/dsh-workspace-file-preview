@@ -10,7 +10,17 @@ import { build } from 'esbuild';
  * from package.json instead of being written here: the local shape and the
  * published shape then cannot drift apart.
  */
-const { name: PACKAGE_NAME } = JSON.parse(await readFile(new URL('package.json', import.meta.url), 'utf8'));
+const { name: manifestName } = JSON.parse(await readFile(new URL('package.json', import.meta.url), 'utf8'));
+
+/**
+ * The published package name differs from the local link name, and both the
+ * module id and the document-preview ids inside the client have to follow it.
+ * The published build therefore overrides the name instead of asserting it
+ * with a sed pass over the source:
+ *
+ *   WFP_PACKAGE_NAME=dsh-workspace-file-preview node build.mjs
+ */
+const PACKAGE_NAME = process.env.WFP_PACKAGE_NAME ?? manifestName;
 
 const wrap = (chunk) => ({
   banner: {
@@ -29,6 +39,7 @@ ${chunk ? `\tchunk: "${chunk}",\n` : ''}	factory: (require) => {
 
 const shared = {
   bundle: true,
+  define: { __WFP_PACKAGE_NAME__: JSON.stringify(PACKAGE_NAME) },
   format: 'cjs',
   target: 'es2020',
   platform: 'browser',

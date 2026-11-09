@@ -28,12 +28,53 @@ in-place Markdown editor that writes back to the file on disk.
 | | |
 | --- | --- |
 | **Markdown rendering** | GFM tables, task lists, footnotes, front matter, code blocks with copy / wrap toggles |
-| **Mermaid diagrams** | rendered as SVG, with zoom in / zoom out / fit-to-width controls |
+| **Mermaid diagrams** | drawn as figures in an editorial skin — paper card, hairline rules, one accent — with fit / zoom, drag-to-pan and a full-screen view |
 | **In-place editing** | edit the Markdown source in the sidebar and save it back to the file |
 | **AI annotation** | pick an element in an HTML/SVG page, or drag a box over an image, and send the selection to the agent |
 | **Video playback** | MP4, MOV, WebM, M4V, OGV, AVI and MKV play in the panel, with size, duration and resolution under the player |
 | **File tree** | browse the workspace, search it, pin what matters, rename / move / delete from a context menu |
 | **Straight to the agent** | "add to chat", "let the agent edit this", or comment on a selection — the file reference lands in the composer |
+
+## Diagrams drawn as figures
+
+A ```mermaid` block is not a widget in a dashboard: it sits in a document,
+next to prose, and it has to read like a figure. The renderer therefore does
+not use Mermaid's default business theme. It draws on a paper card with a
+hairline border and a dot grid, sets node labels and zone titles on a small
+type scale, uses mono micro type for arrow labels and ER field types, and
+reserves a single warm accent for the one or two nodes the diagram is about.
+
+**Focal nodes.** By default the accent goes to the flow's hub — a node of
+degree three or more, or both of them when exactly two tie. Name them yourself
+when that is wrong:
+
+```mermaid
+%% focal: D
+flowchart LR
+    A[Apply] --> D[Review]
+    D --> B[Approved]
+    D --> C[Rejected]
+```
+
+`%% focal: A, C` pins the accent, `%% focal: none` removes it. The directive
+is a comment, so the source stays valid Mermaid anywhere else.
+
+**Reading a wide diagram.** A diagram that does not fit is not shrunk into
+illegibility: the figure keeps a minimum type size and scrolls, drag pans it,
+and the expand button opens it full screen (`Esc` closes). Zoom, the fit
+button and full screen are on the small toolbar in the top-right corner.
+
+**Dark mode and fonts.** The figure follows the host theme and redraws when it
+changes. No web font is fetched — the stacks ask for the editorial faces first
+and fall back to the platform's own, so the preview keeps working offline and
+makes no network request to draw a diagram.
+
+The skin is ported from the MIT-licensed
+[diagram-design](https://github.com/cathrynlavery/diagram-design) skill:
+colours, type scale, geometry and the one-accent rule. Nothing else from that
+project is redistributed — no fonts, icons or templates. See
+[ATTRIBUTION.md](plugin/ATTRIBUTION.md) for the licence, the pinned revision,
+and the exact reuse scope.
 
 ## Install
 
@@ -121,6 +162,12 @@ system, so they cost nothing until you use them:
 | `plugin/client.editor.js` | `marked` (Markdown → HTML) and `turndown` (HTML → Markdown) | you open the Markdown editor |
 | `plugin/client.mermaid.js` | `mermaid` | a document contains a diagram |
 
+The diagram figure itself lives in two small modules that are part of
+`plugin/client.js`: `src/mermaid-skin.js` is the single source of truth for the
+token table, the type scale and the Mermaid theme, and `src/mermaid-svg.js` is
+the post-render pass that removes Mermaid's shadows, rounds corners, writes
+the zone eyebrows and applies the accent.
+
 ### Built bundles are committed
 
 `plugin/client.js`, `plugin/client.editor.js` and `plugin/client.mermaid.js`
@@ -134,6 +181,11 @@ If you change anything under `plugin/src`, rebuild the bundles:
 cd plugin
 npm install          # esbuild + the renderer libraries
 npm run build        # writes client.js, client.editor.js, client.mermaid.js
+
+# The published package name is part of the client: the module id and every
+# document-preview id are built from it. A local link install uses the @local
+# scope, so a release build names the published package explicitly.
+WFP_PACKAGE_NAME=dsh-workspace-file-preview npm run build
 ```
 
 The build uses `esbuild` with `legalComments: 'eof'`, so the `/*! ... */`
@@ -143,7 +195,7 @@ bundle.
 A rebuild is *not* guaranteed to be byte-identical to the committed bundle:
 npm and pnpm lay out nested dependencies differently, so a few transitive
 packages inside `client.mermaid.js` can resolve to a different copy. The
-committed bundles are the ones that shipped in the `v1.2.0` release — rebuild
+committed bundles are the ones that shipped in the `v1.3.0` release — rebuild
 and commit the result if you change `plugin/src`.
 
 ## Security and privacy
@@ -215,6 +267,21 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+### Diagram skin (design values, not code)
+
+`plugin/src/mermaid-skin.js` and `plugin/src/mermaid-svg.js` port the
+diagram-design skin — colour tokens, the type scale, geometry conventions and
+the one-accent rule — from
+[diagram-design](https://github.com/cathrynlavery/diagram-design)
+(MIT, Copyright (c) 2025 Cathryn Lavery), pinned at revision
+`6a7f19fcc132b39b126bea90167679b46b14bcc4`.
+
+No code, font, icon, asset or HTML template from that project is
+redistributed, and no product mark is used. The upstream MIT notice is
+reproduced in full, together with the exact reuse scope and the upstream
+third-party notices that constrain *it* rather than this package, in
+[`plugin/ATTRIBUTION.md`](plugin/ATTRIBUTION.md).
 
 ## License
 

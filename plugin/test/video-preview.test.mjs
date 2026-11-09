@@ -10,6 +10,13 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+
+// The local link and the published package register their previews under
+// different ids; both are the package name, so the wiring test derives it
+// instead of hardcoding one of the two.
+const PACKAGE_NAME = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).name;
+globalThis.__WFP_PACKAGE_NAME__ = PACKAGE_NAME;
 
 import {
   FILE_ADDRESS_PREFIX,
@@ -325,14 +332,14 @@ test('apply registers video as a renderer-mode document preview with a body', as
   };
   apply(ctx);
 
-  const video = previews.find((preview) => preview.id === 'dsh-workspace-file-preview/video');
+  const video = previews.find((preview) => preview.id === PACKAGE_NAME + '/video');
   assert.ok(video, 'the video preview is registered');
   assert.deepEqual(video.extensions, VIDEO_EXTENSIONS);
   assert.deepEqual(video.binaryExtensions, VIDEO_EXTENSIONS);
   assert.equal(video.loading, 'renderer');
   assert.equal(video.wrap, false);
 
-  const body = slots.find((slot) => slot.descriptor.key === 'dsh-workspace-file-preview/video');
+  const body = slots.find((slot) => slot.descriptor.key === PACKAGE_NAME + '/video');
   assert.ok(body, 'the body occupies the document slot under the same id');
   assert.equal(body.descriptor.name, 'sidebar.right.tab.document');
 });
