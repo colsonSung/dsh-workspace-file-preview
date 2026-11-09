@@ -2,8 +2,9 @@
 #
 # Install the DeepSeek Harness "Workspace File Preview" plugin into a profile.
 #
-#   ./install.sh            # the profile the running Harness uses
-#   ./install.sh web        # a named profile
+#   ./install.sh web        # install into the 'web' profile
+#   ./install.sh desktop    # install into the 'desktop' profile
+#   DSH_PROFILE=web ./install.sh   # the profile can come from the environment
 #
 # It installs the package into the profile and adds the bundle row to the
 # profile's patch layer. Both steps are idempotent. Restart the Harness
