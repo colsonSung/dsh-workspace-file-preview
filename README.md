@@ -26,6 +26,27 @@ and a floating chat that talks to the session you are working in.
 └──────────────────────────────┴───────────────────────────────────┘
 ```
 
+## Contents
+
+[Quickstart](#quickstart) · [What you get](#what-you-get) · [Install](#install) ·
+[How it works](#how-it-works) · [Security and privacy](#security-and-privacy) ·
+[Troubleshooting](#troubleshooting) · [Limits and known issues](#limits-and-known-issues) ·
+[Release notes](#release-notes) · [Third-party licenses](#third-party-licenses)
+
+## Quickstart
+
+```bash
+git clone https://github.com/colsonSung/dsh-workspace-file-preview.git
+cd dsh-workspace-file-preview
+./install.sh <profile>        # the profile your Harness boots, e.g. web or desktop
+```
+
+Restart the Harness, open any workspace file, and pick the tab that matches it:
+**Markdown (Mermaid)** for `.md`, **HTML (AI Annotate)** for `.html`/`.svg`,
+**Image (AI Annotate)** for images, and the player appears by itself for video.
+The **Files** tab (or the files button in the session header) opens the
+workspace tree.
+
 ## What you get
 
 | | |
@@ -53,7 +74,7 @@ cd dsh-workspace-file-preview
 
 `install.sh` takes the profile name as its argument (or reads `DSH_PROFILE`)
 and is idempotent: it installs the package into that profile and adds the
-bundle row to ```<profile>/cordis.patch.yml```. **Restart the Harness
+bundle row to `<profile>/cordis.patch.yml`. **Restart the Harness
 afterwards** — the host half of a plugin is loaded at start-up.
 
 Manual equivalent:
@@ -75,7 +96,7 @@ dsh plugin --profile <profile> add ./plugin
 dsh plugin --profile <profile> remove dsh-workspace-file-preview
 ```
 
-Then delete the bundle row from ```<profile>/cordis.patch.yml``` and restart the
+Then delete the bundle row from `<profile>/cordis.patch.yml` and restart the
 Harness.
 
 ### Upgrading from the old name
@@ -89,7 +110,7 @@ and it plays video.
 dsh plugin --profile <profile> remove dsh-markdown-mermaid-preview
 ```
 
-Then remove the old bundle row from ```<profile>/cordis.patch.yml```, install this
+Then remove the old bundle row from `<profile>/cordis.patch.yml`, install this
 version as above, and restart the Harness. Your pinned-file list is carried
 over — the plugin reads the old `mmd-pinned::<workspace>` key once and then
 drops it.
@@ -243,7 +264,7 @@ made by the host's own model service, configured in the Harness profile.
   target that is not a regular file, and any save larger than 4 MB.
 * **What is written to disk.** Workspace files you explicitly save from the
   editor or edit through the file tree, and nothing else. The only file the
-  installer touches is ```<profile>/cordis.patch.yml```. The preview itself never
+  installer touches is `<profile>/cordis.patch.yml`. The preview itself never
   writes a cache file.
 * **File-tree privileges.** `/wfp-fs` performs `mkdir`, `create`, `rename` /
   `move`, `copy` and `delete` as the Harness process. It guards absolute
@@ -258,6 +279,19 @@ made by the host's own model service, configured in the Harness profile.
   libraries with no telemetry.
 
 See [SECURITY.md](SECURITY.md) for the reporting process.
+
+## Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| The preview tab never appears | The plugin row has to be in the profile's patch layer and the Harness has to be restarted: the host half mounts at start-up. Check `<profile>/cordis.patch.yml` for the `workspace-file-preview` row. |
+| A file opens in another preview | Two plugins can claim the same extension; the host picks one. Remove the row of the plugin you do not want, or rename the file to a suffix only this plugin claims. |
+| Diagrams show their source instead of a figure | The lazy `client.mermaid.js` chunk did not load. Reload the window; if the browser or a proxy blocks the Harness `/plugins/` path, no renderer chunk can load. |
+| Diagrams still use Mermaid's blue theme | The window is running a stale client bundle. After updating the plugin, reload the page (`⌘R`); restart the Harness if the host half changed too. |
+| "AI assist" or the side chat says there is no model | The profile has no model configured. Annotation, editing, the file tree and diagram rendering keep working without one. |
+| The editor refuses to open | The file has not finished loading (scroll to the end) or it is not a regular file. Saving is capped at 4 MB. |
+| A video does not play | The host reached the file, but the web view cannot decode it. MP4/H.264 and WebM are the safest; AVI and MKV depend on the platform. |
+| Pinned files are empty after renaming the plugin | Pins live under `wfp-pinned::<workspace>`. The old `mmd-pinned::` key is read once and then dropped, so pins survive the rename. |
 
 ## Limits and known issues
 
@@ -276,6 +310,14 @@ See [SECURITY.md](SECURITY.md) for the reporting process.
   routing) stay out of reach. There is no SVG/PNG export from the preview yet.
 * **Nothing is rendered server-side.** Every surface in this plugin is drawn in
   the browser from text the host has already read.
+
+## Release notes
+
+**v1.3.0** — the diagram skin. Mermaid blocks are drawn as figures: paper card with a dot grid, hairline rules, a small type scale, mono micro labels, a single accent for the one or two focal nodes, a `%% focal:` directive, dark mode that follows the host, and a full-screen view for wide diagrams. The post-render pass removes Mermaid v12's shadows and hard-coded colours, and fixes CJK labels that tracked letter-spacing would break. The document-preview ids are now derived from the package name, so a release build names the package instead of rewriting the source.
+
+**v1.2.0** — the plugin is renamed from *Markdown & Mermaid Preview* to *Workspace File Preview*: the HTML/SVG annotator, the image annotator, in-panel video and the workspace file tree joined the Markdown preview. The pinned-file list is migrated on first read.
+
+Earlier releases were the Markdown & Mermaid plugin (`dsh-markdown-mermaid-preview`): Markdown rendering, Mermaid diagrams, the in-place editor and the comment-to-chat actions.
 
 ## Third-party licenses
 
